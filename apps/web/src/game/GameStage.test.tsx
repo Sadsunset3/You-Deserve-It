@@ -6,17 +6,23 @@ import { makeRoom } from './test-fixtures';
 afterEach(cleanup);
 
 describe('single-screen game stage', () => {
-  it('shows three characters on each rail and keeps commands in modal layers', () => {
+  it('routes every debate phase to the full-screen chat without modal or rail controls', () => {
     render(<GameStage room={makeRoom()} send={async () => {}} leave={() => {}} />);
-    expect(within(screen.getByTestId('rail-a')).getAllByTestId('rail-character')).toHaveLength(3);
-    expect(within(screen.getByTestId('rail-b')).getAllByTestId('rail-character')).toHaveLength(3);
-    expect(screen.getByRole('button', { name: '投降并退出' })).toBeInTheDocument();
-    expect(screen.getByRole('dialog')).toBeInTheDocument();
-    expect(screen.getByRole('textbox', { name: '你的攻击辩词' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: '攻防聊天室' })).toBeInTheDocument();
+    expect(screen.queryByTestId('rail-a')).not.toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.queryByText('提交攻击辩词')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('房间在线状态')).toBeVisible();
+  });
+
+  it('keeps connection state visible during final judgment and match end', () => {
+    render(<GameStage room={makeRoom({ phase: 'match-end', finalResult: { survivor: 'a', reason: '乙方掉线', philosophy: '连接已经断开。' } })} send={async () => {}} leave={() => {}} />);
+    expect(screen.getByLabelText('房间在线状态')).toBeVisible();
+    expect(screen.getByText('甲方 · 在线')).toBeVisible();
   });
 
   it('keeps rail evidence compact and opens the complete character dossier on demand', () => {
-    const room = makeRoom();
+    const room = makeRoom({ phase: 'traits' });
     room.characters = room.characters.map((character) => character.id === 'a0' ? {
       ...character,
       traits: [{ id: 'trait-1', text: '曾经拒绝救助仇人', tag: '过往', polarity: -1 as const }],
@@ -40,7 +46,7 @@ describe('single-screen game stage', () => {
   });
 
   it('shows explicit empty evidence states in the character dossier', () => {
-    render(<GameStage room={makeRoom()} send={async () => {}} leave={() => {}} />);
+    render(<GameStage room={makeRoom({ phase: 'traits' })} send={async () => {}} leave={() => {}} />);
 
     fireEvent.click(within(screen.getByTestId('rail-a')).getByRole('button', { name: '查看消防员人物档案' }));
     const drawer = screen.getByRole('dialog', { name: '人物档案：消防员' });

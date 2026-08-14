@@ -11,7 +11,7 @@ import { RoomPresence } from './game/RoomPresence';
 import './styles.css';
 
 const defaultConfig: GameConfig = { games: 1, timingMode: 'timed', selectionSeconds: 180, traitSeconds: 180, debateMinutes: 5 };
-const phaseTitle: Record<string, string> = { waiting: '等待另一位被告', selecting: '选择两名人物', traits: '追加人物词条', 'attack-a': '甲方发起攻击', 'defense-b': '乙方提交防守', 'attack-b': '乙方发起攻击', 'defense-a': '甲方提交防守', 'match-end': '审判结束' };
+const phaseTitle: Record<string, string> = { waiting: '等待另一位被告', selecting: '选择两名人物', traits: '追加人物词条', 'target-selecting': '攻方选择目标', 'debate-chat': '实时攻防辩论', 'round-adjudicating': '列车长裁决中', 'round-result': '回合裁决', 'track-adjudicating': '最终压轨', 'judgment-generating': '审判生成中', judgment: '黑暗审判', 'between-games': '等待下一局', 'match-end': '审判结束' };
 
 export function App() {
   const [nickname, setNickname] = useState(''); const [code, setCode] = useState(''); const [mode, setMode] = useState<'create' | 'join'>('create'); const [config, setConfig] = useState(defaultConfig); const [room, setRoom] = useState<RoomView | null>(null); const [error, setError] = useState(''); const [busy, setBusy] = useState(false);

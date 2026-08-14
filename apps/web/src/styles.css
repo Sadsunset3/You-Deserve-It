@@ -250,18 +250,7 @@ button.rail-slot, .rail-slot { width: 180px; min-width: 180px; min-height: 126px
 .drawer-empty { border: 2px dashed var(--muted); padding: .8rem; color: var(--muted); font-weight: 800; }
 @keyframes drawer-fade-in { from { opacity: 0; } }
 @keyframes drawer-slide-in { from { transform: translateX(100%); } }
-.debate-modal { position: fixed; z-index: 80; inset: 50% auto auto 50%; width: min(760px, calc(100vw - 2rem)); max-height: calc(100dvh - 2rem); overflow: auto; transform: translate(-50%, -50%); border: 4px solid var(--ink); background: #fffaf0; box-shadow: 12px 12px 0 rgb(0 0 0 / .65); padding: clamp(1rem, 2.5vw, 1.8rem); }
-.debate-modal::before { content: ''; position: fixed; z-index: -1; inset: -100vh -100vw; background: rgb(10 8 7 / .58); backdrop-filter: blur(2px); }
-.modal-kicker, .judgment-overlay > span { display: inline-block; padding: .25rem .5rem; background: var(--red); color: white; font-size: .72rem; font-weight: 900; letter-spacing: .08em; }
-.debate-modal h2 { margin: .7rem 0 1rem; font-size: clamp(1.5rem, 3vw, 2.5rem); }
-.modal-targets { display: grid; grid-template-columns: repeat(3, 1fr); gap: .65rem; }
-.modal-targets button { min-height: 105px; display: grid; gap: .35rem; align-content: start; text-align: left; border-width: 3px; background: white; }
-.modal-targets button.selected { background: var(--ink); color: white; outline: 4px solid var(--red); }
-.modal-targets span { font-size: .78rem; line-height: 1.35; }
-.modal-speech { margin-top: 1rem; font-weight: 900; }.modal-speech textarea { min-height: 120px; max-height: 26vh; resize: vertical; }
-.debate-modal > .primary { width: 100%; margin-top: .8rem; }
-.debate-modal blockquote { margin: 1rem 0; border-left: 7px solid var(--red); background: var(--gray); padding: 1rem; font-size: 1.08rem; }
-.modal-wait { border: 2px dashed var(--ink); padding: 1.2rem; color: var(--muted); font-weight: 800; }
+.judgment-overlay > span { display: inline-block; padding: .25rem .5rem; background: var(--red); color: white; font-size: .72rem; font-weight: 900; letter-spacing: .08em; }
 .compact-traits { position: fixed; z-index: 30; left: 50%; bottom: .7rem; width: min(900px, calc(100vw - 1.4rem)); transform: translateX(-50%); display: flex; gap: .7rem; align-items: center; border: 3px solid var(--ink); background: white; padding: .55rem; }.compact-traits p { margin: 0; font-size: .76rem; }.compact-traits .traits { flex: 1; flex-wrap: nowrap; overflow: hidden; }.compact-traits .traits span { padding: .35rem; background: var(--gray); font-size: .68rem; }
 .judgment-overlay { position: fixed; z-index: 100; inset: 0; overflow: auto; display: grid; align-content: center; gap: .8rem; padding: clamp(1.2rem, 4vw, 4rem) max(1.2rem, calc((100vw - 1050px) / 2)); background: #eadfca; background-image: radial-gradient(circle at 50% 22%, #fff9e9 0 10%, transparent 42%), radial-gradient(circle, rgb(39 31 24 / .09) 0 1px, transparent 1.5px); background-size: auto, 8px 8px; color: var(--ink); }
 .judgment-overlay h2 { margin: 0; color: var(--red); font-size: clamp(2rem, 5vw, 4.5rem); line-height: 1; }
@@ -271,7 +260,7 @@ button.rail-slot, .rail-slot { width: 180px; min-width: 180px; min-height: 126px
 .judgment-overlay .primary { width: fit-content; background: #a11212; }
 .phase-track-adjudicating .stage-train { animation: final-train-shift 600ms cubic-bezier(.7,0,.3,1) both; }
 @keyframes final-train-shift { to { transform: translateX(-42vw) skewX(-4deg); } }
-@media (max-width: 900px) { .game-hud { margin-left: 0; grid-template-columns: 1fr auto; }.game-hud h1 { order: 3; grid-column: 1/-1; }.game-hud .surrender-button { position: absolute; right: .4rem; bottom: .4rem; }.game-rails { padding: 4.5rem 0 .5rem; overflow-x: auto; }.game-rails .rail-lane { min-width: 720px; }.modal-targets { grid-template-columns: 1fr; }.judgment-columns, .judgment-overlay ol { grid-template-columns: 1fr; } }
+@media (max-width: 900px) { .game-hud { margin-left: 0; grid-template-columns: 1fr auto; }.game-hud h1 { order: 3; grid-column: 1/-1; }.game-hud .surrender-button { position: absolute; right: .4rem; bottom: .4rem; }.game-rails { padding: 4.5rem 0 .5rem; overflow-x: auto; }.game-rails .rail-lane { min-width: 720px; }.judgment-columns, .judgment-overlay ol { grid-template-columns: 1fr; } }
 
 .debate-chat-page { min-height: 100dvh; background: var(--gray); color: var(--ink); }
 .debate-chat-header { min-height: 78px; display: grid; grid-template-columns: minmax(220px, 1fr) auto minmax(260px, 1fr); align-items: center; gap: 1rem; border-bottom: 4px solid var(--ink); background: white; padding: .75rem 1rem; }
