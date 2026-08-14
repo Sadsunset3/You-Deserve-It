@@ -1,0 +1,7 @@
+node_modules
+**/dist
+data
+.git
+.env*
+openspec
+《活该》游戏设计

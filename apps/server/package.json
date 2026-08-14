@@ -1,0 +1,35 @@
+{
+  "name": "@ydi/server",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "test": "vitest run --config ../../vitest.config.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src",
+    "verify:deepseek": "node --env-file=../../.env dist/ai/verify.js"
+  },
+  "dependencies": {
+    "@fastify/cookie": "latest",
+    "@fastify/rate-limit": "latest",
+    "@fastify/static": "latest",
+    "@ydi/contracts": "workspace:*",
+    "better-sqlite3": "latest",
+    "drizzle-orm": "latest",
+    "fastify": "latest",
+    "nanoid": "latest",
+    "openai": "latest",
+    "socket.io": "latest",
+    "zod": "latest"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "latest",
+    "socket.io-client": "latest",
+    "tsx": "latest",
+    "typescript": "6.0.2",
+    "vitest": "latest"
+  }
+}

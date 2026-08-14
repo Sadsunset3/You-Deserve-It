@@ -1,0 +1,17 @@
+{
+  "name": "@ydi/contracts",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run --config ../../vitest.config.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src"
+  },
+  "dependencies": { "zod": "latest" },
+  "devDependencies": { "typescript": "6.0.2", "vitest": "latest" }
+}

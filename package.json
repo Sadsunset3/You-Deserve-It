@@ -1,0 +1,21 @@
+{
+  "name": "you-deserve-it",
+  "private": true,
+  "packageManager": "pnpm@11.5.2",
+  "scripts": {
+    "dev": "pnpm --parallel --filter @ydi/server --filter @ydi/web dev",
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "pnpm -r lint",
+    "start": "pnpm --filter @ydi/server start"
+  },
+  "devDependencies": {
+    "@eslint/js": "latest",
+    "eslint": "latest",
+    "prettier": "latest",
+    "typescript": "6.0.2",
+    "typescript-eslint": "latest",
+    "vitest": "latest"
+  }
+}

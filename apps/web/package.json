@@ -1,0 +1,15 @@
+{
+  "name": "@ydi/web",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -p tsconfig.json --noEmit && vite build",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src"
+  },
+  "dependencies": { "@ydi/contracts": "workspace:*", "react": "latest", "react-dom": "latest", "socket.io-client": "latest" },
+  "devDependencies": { "@testing-library/jest-dom": "latest", "@testing-library/react": "latest", "@types/react": "latest", "@types/react-dom": "latest", "@vitejs/plugin-react": "latest", "jsdom": "latest", "typescript": "6.0.2", "vite": "latest", "vitest": "latest" }
+}

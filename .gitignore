@@ -1,0 +1,19 @@
+node_modules/
+dist/
+coverage/
+playwright-report/
+test-results/
+data/*.db
+data/*.db-*
+**/data/*.db
+**/data/*.db-*
+.env
+.env.*
+!.env.example
+*.tsbuildinfo
+.impeccable/live/
+
+# 本地 AI 工具 / IDE 配置与运行状态
+.idea/
+.codex/
+.superpowers/
