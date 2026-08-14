@@ -69,14 +69,31 @@ export function fallbackTrackVerdict(input: TrackDecisionInput): TrackVerdict {
 }
 
 export function fallbackJudgment(input: JudgmentInput): PhilosophyJudgment {
-  const describe = (seat: 'a' | 'b') => `${input.players[seat].nickname}选择了${input.tracks[seat].map((character) => character.name).join('、')}，并在三轮中留下${input.rounds.filter((round) => round.attacker === seat || round.defender === seat).length}次辩护痕迹。`;
+  const line = (text: string) => text.slice(0, 180);
+  const trackNames = (seat: Seat) => input.tracks[seat].map((character) => character.name).join('、') || '无人留下姓名';
+  const trackBackgrounds = (seat: Seat) => input.tracks[seat].map((character) => `${character.name}：${character.background}`).join('；') || '没有人物背景';
+  const playerLines = (seat: Seat): [string, string] => {
+    const roundArguments = input.rounds.map((round) => {
+      const speech = round.messages.find((message) => message.sender === seat && message.text.trim())?.text.trim();
+      return `第${round.round}轮“${(speech ?? '没有实质发言').slice(0, 36)}”`;
+    });
+    const roundResults = input.rounds.map((round) => round.verdict.winnerSeat === seat
+      ? `第${round.round}轮胜在“${round.verdict.winningSummary.slice(0, 34)}”`
+      : `第${round.round}轮未能说服列车长`);
+    return [
+      line(roundArguments.length > 0 ? `${input.players[seat].nickname}守着${seat.toUpperCase()}轨：${roundArguments.join('；')}，` : `${input.players[seat].nickname}守着${seat.toUpperCase()}轨，却没有留下完整辩词，`),
+      line(roundResults.length > 0 ? `${roundResults.join('；')}。` : '没有一轮裁决可供这条轨道申辩。'),
+    ];
+  };
   return {
     title: '列车离席之后',
-    summary: `三轮聊天及其交锋摘要没有让生命变得可计算，只让${input.verdict.crushedSeat.toUpperCase()}轨成为了这次秩序的代价。`,
-    playerA: `${describe('a')}功绩被当作筹码，过错也被当作方便的砝码。`,
-    playerB: `${describe('b')}所谓原则，往往只在它不会压到自己时显得坚固。`,
-    conductorCritique: `列车长以“${input.conductor.rule}”命名自己的偏见，再把${input.verdict.reason}称作判断。`,
-    questions: ['如果轨道上的名字换成你爱的人，同一套原则还成立吗？', '当生命必须被比较时，谁赋予了比较者清白？'],
+    stanzas: [
+      { kind: 'opening', lines: ['三轮话音落进枕木之间，', '这一夜终于只剩一条轨道可以天亮。'] },
+      { kind: 'player-a', lines: playerLines('a') },
+      { kind: 'player-b', lines: playerLines('b') },
+      { kind: 'tracks', lines: [line(`A轨留下${trackNames('a')}：${trackBackgrounds('a')}，`), line(`B轨留下${trackNames('b')}：${trackBackgrounds('b')}。`)] },
+      { kind: 'verdict', lines: [line(`${input.conductor.name}依照“${input.conductor.rule}”拉下拉杆，`), line(`${input.verdict.survivor.toUpperCase()}轨幸存，${input.verdict.crushedSeat.toUpperCase()}轨被压过：${input.verdict.reason}`)] },
+    ],
     fallback: true,
   };
 }

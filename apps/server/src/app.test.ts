@@ -78,7 +78,13 @@ describe('HTTP app', () => {
     const aiGateway: AiGateway = {
       decideRound: async () => { roundCalls++; return { winnerSeat: 'b', conductorMessage: '这轮乙方说得更实在，我判乙方赢。', debateSummary: '甲方质疑价值，乙方强调救人事实。', winningSummary: '他保护过无辜者。', fallback: false }; },
       decideTrack: async () => ({ crushedSeat: 'b', survivor: 'a', reason: '甲轨胜出', decisiveFactors: ['事实'], fallback: false }),
-      judgeMatch: async () => ({ title: '审判', summary: '总结', playerA: '甲', playerB: '乙', conductorCritique: '列车长', questions: ['为什么？', '凭什么？'], fallback: false }),
+      judgeMatch: async () => ({ title: '审判', stanzas: [
+        { kind: 'opening', lines: ['列车进入黑夜，', '两条轨道等待裁决。'] },
+        { kind: 'player-a', lines: ['甲方留下辩词，', '为自己的轨道呼吸。'] },
+        { kind: 'player-b', lines: ['乙方留下辩词，', '也为自己的轨道呼吸。'] },
+        { kind: 'tracks', lines: ['人物留在甲轨，', '人物也留在乙轨。'] },
+        { kind: 'verdict', lines: ['列车长拉下拉杆，', '一条轨道迎来车轮。'] },
+      ], fallback: false }),
     };
     const usedKeys: string[] = [];
     const app = await buildApp({ databasePath: ':memory:', sessionSecret: '12345678901234567890123456789012', aiGatewayFactory: (apiKey) => { usedKeys.push(apiKey); return aiGateway; } }); apps.push(app);

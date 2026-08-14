@@ -8,7 +8,13 @@ import { migrateRoomSnapshot } from './types';
 const config = { games: 1, timingMode: 'timed', selectionSeconds: 180, traitSeconds: 180, debateMinutes: 5 } satisfies GameConfig;
 const roundVerdict: DebateRoundVerdict = { winnerSeat: 'b', conductorMessage: '这轮乙方更站得住，我判乙方赢。', debateSummary: '甲方攻击人物过去，乙方强调人物仍有价值。', winningSummary: '他仍有不可替代的价值。', fallback: false };
 const trackVerdict: TrackVerdict = { crushedSeat: 'b', survivor: 'a', reason: '甲轨整体更值得保留', decisiveFactors: ['三轮论据'], fallback: false };
-const judgment: PhilosophyJudgment = { title: '最后的道岔', summary: '生命被迫成为比较题。', playerA: '甲方把功绩当筹码。', playerB: '乙方把悔恨当赎金。', conductorCritique: '列车长把偏见包装成秩序。', questions: ['功绩能抵罪吗？', '谁有资格定价？'], fallback: false };
+const judgment: PhilosophyJudgment = { title: '最后的道岔', stanzas: [
+  { kind: 'opening', lines: ['列车切开夜色，', '名字等待称量。'] },
+  { kind: 'player-a', lines: ['甲方高举功绩，', '也藏起恐惧。'] },
+  { kind: 'player-b', lines: ['乙方追问偿还，', '替自己的轨道呼吸。'] },
+  { kind: 'tracks', lines: ['医生留在甲轨，', '小偷伏在乙轨。'] },
+  { kind: 'verdict', lines: ['列车长拉下拉杆，', '乙轨被车轮带走。'] },
+], fallback: false };
 
 async function startRoom(rooms: RoomManager, games: 1 | 3 | 5 = 1, overrides: Partial<GameConfig> = {}) {
   const created = await rooms.create('p1', '甲方', { ...config, games, ...overrides });
@@ -59,6 +65,19 @@ describe('room timing and snapshot migration', () => {
     expect(migrated.phase).toBe('match-end');
     expect(migrated.deadline).toBeNull();
     expect(migrated.finalResult?.reason).toContain('重新开局');
+  });
+
+  it('ends a room whose persisted judgment uses the retired report shape', () => {
+    const migrated = migrateRoomSnapshot({
+      phase: 'judgment',
+      deadline: null,
+      config,
+      judgment: { title: '旧审判', summary: '旧版总结', playerA: '甲', playerB: '乙', conductorCritique: '列车长', questions: ['一', '二'], fallback: false },
+      trackVerdict: { crushedSeat: 'b', survivor: 'a', reason: '旧裁决', decisiveFactors: ['旧证据'], fallback: false },
+    } as never);
+    expect(migrated.phase).toBe('match-end');
+    expect(migrated.judgment).toBeNull();
+    expect(migrated.finalResult).toMatchObject({ survivor: 'a', philosophy: '旧版总结' });
   });
 });
 
@@ -257,6 +276,7 @@ describe('authoritative three-round RoomManager', () => {
     await rooms.saveJudgment(code, current.version, judgment);
     current = rooms.get(code);
     expect(rooms.view(code, 'p1').judgment).toEqual(judgment);
+    expect(current.finalResult?.philosophy).toBe(judgment.stanzas.flatMap((stanza) => stanza.lines).join('\n'));
     await rooms.readyNextGame(code, 'p1', current.version);
     current = rooms.get(code);
     expect(current.phase).toBe('judgment');

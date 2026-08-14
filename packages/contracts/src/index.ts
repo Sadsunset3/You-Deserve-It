@@ -59,18 +59,23 @@ export const trackVerdictSchema = z.object({
   message: 'crushedSeat and survivor must differ',
 });
 
+const poemLineSchema = z.string().trim().min(1).max(180);
+const poemStanza = <T extends string>(kind: T) => z.object({
+  kind: z.literal(kind),
+  lines: z.tuple([poemLineSchema, poemLineSchema]),
+}).strict();
+
 export const philosophyJudgmentSchema = z.object({
   title: z.string().trim().min(1).max(120),
-  summary: z.string().trim().min(1).max(1600),
-  playerA: z.string().trim().min(1).max(1200),
-  playerB: z.string().trim().min(1).max(1200),
-  conductorCritique: z.string().trim().min(1).max(1200),
-  questions: z.tuple([
-    z.string().trim().min(1).max(300),
-    z.string().trim().min(1).max(300),
+  stanzas: z.tuple([
+    poemStanza('opening'),
+    poemStanza('player-a'),
+    poemStanza('player-b'),
+    poemStanza('tracks'),
+    poemStanza('verdict'),
   ]),
   fallback: z.boolean(),
-});
+}).strict();
 
 export type GameConfig = z.infer<typeof gameConfigSchema>;
 export type TimingMode = GameConfig['timingMode'];

@@ -189,7 +189,7 @@ export class RoomManager {
     return this.mutateVersion(code, version, (room) => {
       if (room.phase !== 'judgment-generating') throw new Error('judgment unavailable');
       room.judgment = judgment;
-      if (room.finalResult) room.finalResult.philosophy = judgment.summary;
+      if (room.finalResult) room.finalResult.philosophy = judgment.stanzas.flatMap((stanza) => stanza.lines).join('\n');
       room.phase = 'judgment';
     });
   }

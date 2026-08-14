@@ -64,6 +64,18 @@ export function migrateRoomSnapshot(snapshot: Room): Room {
   room.trackVerdict ??= null;
   room.judgment ??= null;
   room.nextGameReady ??= { a: false, b: false };
+  const persistedJudgment = room.judgment as unknown as { stanzas?: unknown; summary?: unknown } | null;
+  if (persistedJudgment && !Array.isArray(persistedJudgment.stanzas)) {
+    const philosophy = typeof persistedJudgment.summary === 'string' ? persistedJudgment.summary : '旧版审判已随列车驶离。';
+    room.judgment = null;
+    room.phase = 'match-end';
+    room.deadline = null;
+    room.finalResult ??= {
+      survivor: room.trackVerdict?.survivor ?? 'a',
+      reason: '版本升级后旧版终局无法继续展示，请重新开局。',
+      philosophy,
+    };
+  }
   const legacy = new Set(['attack-a', 'attack-b', 'defense-a', 'defense-b', 'attack-input', 'defense-input', 'round-adjudicating', 'round-result', 'verdict', 'round-end', 'final-judgment', 'philosophy', 'game-end']);
   if (legacy.has(String(room.phase))) {
     room.phase = 'match-end';

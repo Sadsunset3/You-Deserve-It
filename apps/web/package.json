@@ -10,6 +10,23 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint src"
   },
-  "dependencies": { "@ydi/contracts": "workspace:*", "react": "latest", "react-dom": "latest", "socket.io-client": "latest" },
-  "devDependencies": { "@testing-library/jest-dom": "latest", "@testing-library/react": "latest", "@types/react": "latest", "@types/react-dom": "latest", "@vitejs/plugin-react": "latest", "jsdom": "latest", "typescript": "6.0.2", "vite": "latest", "vitest": "latest" }
+  "dependencies": {
+    "@gsap/react": "^2.1.2",
+    "@ydi/contracts": "workspace:*",
+    "gsap": "^3.15.0",
+    "react": "latest",
+    "react-dom": "latest",
+    "socket.io-client": "latest"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "latest",
+    "@testing-library/react": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "@vitejs/plugin-react": "latest",
+    "jsdom": "latest",
+    "typescript": "6.0.2",
+    "vite": "latest",
+    "vitest": "latest"
+  }
 }

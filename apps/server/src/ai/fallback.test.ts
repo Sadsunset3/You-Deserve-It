@@ -21,7 +21,18 @@ describe('fallback verdict', () => {
       ],
       priorRounds: [],
     };
-    const track: TrackDecisionInput = { seed: 't', conductor, tracks: { a: [character], b: [{ ...character, id: 'e', alignment: 'evil', name: '小偷', background: '偷钱' }] }, rounds: [] };
+    const rounds = ([1, 2, 3] as const).map((roundNumber) => ({
+      round: roundNumber,
+      attacker: roundNumber % 2 === 1 ? 'a' as const : 'b' as const,
+      defender: roundNumber % 2 === 1 ? 'b' as const : 'a' as const,
+      targetId: 'p',
+      messages: [
+        { messageId: `a-${roundNumber}`, sequence: 1, sender: 'a' as const, text: `甲方第${roundNumber}轮论点`, sentAt: `2026-08-15T00:00:0${roundNumber}.000Z` },
+        { messageId: `b-${roundNumber}`, sequence: 2, sender: 'b' as const, text: `乙方第${roundNumber}轮论点`, sentAt: `2026-08-15T00:00:1${roundNumber}.000Z` },
+      ],
+      verdict: { winnerSeat: roundNumber === 2 ? 'b' as const : 'a' as const, conductorMessage: `第${roundNumber}轮裁决`, debateSummary: `第${roundNumber}轮双方摘要`, winningSummary: `第${roundNumber}轮胜方摘要`, fallback: false },
+    }));
+    const track: TrackDecisionInput = { seed: 't', conductor, tracks: { a: [character], b: [{ ...character, id: 'e', alignment: 'evil', name: '小偷', background: '偷钱' }] }, rounds };
     const judgment: JudgmentInput = { ...track, players: { a: { nickname: '甲' }, b: { nickname: '乙' } }, verdict: fallbackTrackVerdict(track) };
 
     const roundVerdict = fallbackRoundVerdict(round);
@@ -33,6 +44,14 @@ describe('fallback verdict', () => {
     expect(roundVerdict.winningSummary).toContain(winningText);
     expect(roundVerdict.winningSummary).not.toContain(losingText);
     expect(fallbackTrackVerdict(track).decisiveFactors.length).toBeGreaterThan(0);
-    expect(fallbackJudgment(judgment).questions).toHaveLength(2);
+    const poem = fallbackJudgment(judgment);
+    expect(poem.stanzas).toHaveLength(5);
+    expect(poem.stanzas.flatMap((stanza) => stanza.lines)).toHaveLength(10);
+    expect(poem.stanzas[3]?.lines.join('')).toContain('消防员');
+    expect(poem.stanzas[4]?.lines.join('')).toContain(judgment.verdict.crushedSeat.toUpperCase());
+    expect(poem.stanzas[1]?.lines.join('')).toContain('甲方第1轮论点');
+    expect(poem.stanzas[1]?.lines.join('')).toContain('甲方第3轮论点');
+    expect(poem.stanzas[2]?.lines.join('')).toContain('乙方第1轮论点');
+    expect(poem.stanzas[2]?.lines.join('')).toContain('乙方第3轮论点');
   });
 });

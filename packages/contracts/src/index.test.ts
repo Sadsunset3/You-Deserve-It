@@ -87,17 +87,19 @@ describe('shared contracts', () => {
     expect(() => trackVerdictSchema.parse({ crushedSeat: 'c', survivor: 'a', reason: '判断', decisiveFactors: ['事实'], fallback: false })).toThrow();
   });
 
-  it('requires a complete shared philosophical judgment', () => {
+  it('requires a five-stanza poetic match judgment', () => {
     const judgment = philosophyJudgmentSchema.parse({
       title: '最后的道岔',
-      summary: '双方都在用有限事实交换生命。',
-      playerA: '甲方相信功绩可以抵债。',
-      playerB: '乙方相信未来可以赎罪。',
-      conductorCritique: '列车长也只是把偏见包装成秩序。',
-      questions: ['如果无人旁观，你还会如此选择吗？', '谁有资格为陌生人定价？'],
+      stanzas: [
+        { kind: 'opening', lines: ['列车把夜色切成两半，', '名字在铁轨上等待称量。'] },
+        { kind: 'player-a', lines: ['甲方把救人的旧事举过头顶，', '也把自己的恐惧藏进辩词。'] },
+        { kind: 'player-b', lines: ['乙方追问过错是否能够偿还，', '每句话都在替自己的轨道呼吸。'] },
+        { kind: 'tracks', lines: ['消防员与医生留在甲轨，', '骗子和小偷在乙轨沉默。'] },
+        { kind: 'verdict', lines: ['列车长按下偏执的拉杆，', '乙轨被夜色与车轮一同带走。'] },
+      ],
       fallback: false,
     });
-    expect(judgment.questions).toHaveLength(2);
-    expect(() => philosophyJudgmentSchema.parse({ ...judgment, questions: ['只有一个问题'] })).toThrow();
+    expect(judgment.stanzas.flatMap((stanza) => stanza.lines)).toHaveLength(10);
+    expect(() => philosophyJudgmentSchema.parse({ ...judgment, stanzas: judgment.stanzas.slice(0, 4) })).toThrow();
   });
 });
