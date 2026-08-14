@@ -1,5 +1,5 @@
 import OpenAI from 'openai';
-import type { JudgmentInput, PhilosophyJudgment, RoundDecisionInput, RoundVerdict, TrackDecisionInput, TrackVerdict } from '@ydi/contracts';
+import type { DebateRoundVerdict, JudgmentInput, PhilosophyJudgment, RoundDecisionInput, TrackDecisionInput, TrackVerdict } from '@ydi/contracts';
 import type { ZodType } from 'zod';
 import { philosophyJudgmentSchema, roundVerdictSchema, trackVerdictSchema } from './schemas.js';
 import { fallbackJudgment, fallbackRoundVerdict, fallbackTrackVerdict } from './fallback.js';
@@ -17,7 +17,7 @@ type Options = {
 };
 
 export type AiGateway = {
-  decideRound(input: RoundDecisionInput): Promise<RoundVerdict>;
+  decideRound(input: RoundDecisionInput): Promise<DebateRoundVerdict>;
   decideTrack(input: TrackDecisionInput): Promise<TrackVerdict>;
   judgeMatch(input: JudgmentInput): Promise<PhilosophyJudgment>;
 };

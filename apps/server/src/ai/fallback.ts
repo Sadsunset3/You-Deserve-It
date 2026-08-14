@@ -1,7 +1,9 @@
 import { createHash } from 'node:crypto';
-import type { Alignment, JudgmentInput, PhilosophyJudgment, RoundDecisionInput, RoundVerdict, TrackDecisionInput, TrackVerdict, Verdict } from '@ydi/contracts';
+import type { Alignment, DebateRoundVerdict, JudgmentInput, PhilosophyJudgment, RoundDecisionInput, Seat, TrackDecisionInput, TrackVerdict } from '@ydi/contracts';
 
-export function fallbackVerdict(input: { seed: string; alignment: Alignment; traitPolarity: number; attack: string; defense: string; conductorBias: number }): Verdict {
+type LegacyVerdict = { winner: 'attack' | 'defense'; reason: string; coreArgument: string; fallback: true };
+
+export function fallbackVerdict(input: { seed: string; alignment: Alignment; traitPolarity: number; attack: string; defense: string; conductorBias: number }): LegacyVerdict {
   const alignmentScore = input.alignment === 'good' ? 1 : -1;
   const evidence = alignmentScore + input.traitPolarity + input.conductorBias + (input.defense.trim().length - input.attack.trim().length) / 200;
   const tie = Number.parseInt(createHash('sha256').update(input.seed).digest('hex').slice(0, 4), 16) % 2;
@@ -20,20 +22,33 @@ function characterScore(character: TrackDecisionInput['tracks']['a'][number], co
   return alignment + traits + argumentsScore + conductorBias * (character.alignment === 'good' ? 0.25 : -0.25);
 }
 
-export function fallbackRoundVerdict(input: RoundDecisionInput): RoundVerdict {
+function summarizeMessages(input: RoundDecisionInput, seats: Seat[]) {
+  const names = new Set(seats);
+  const messages = input.messages.filter((message) => names.has(message.sender) && message.text.trim());
+  return messages.length > 0
+    ? messages.map((message) => `${input.players[message.sender].nickname}：${message.text.trim()}`).join('；')
+    : '这一方没有留下实质发言。';
+}
+
+export function fallbackRoundVerdict(input: RoundDecisionInput): DebateRoundVerdict {
   const traitPolarity = input.target.traits.reduce((sum, trait) => sum + trait.polarity, 0);
+  const attack = input.messages.filter((message) => message.sender === input.attacker).map((message) => message.text).join('\n');
+  const defense = input.messages.filter((message) => message.sender === input.defender).map((message) => message.text).join('\n');
   const legacy = fallbackVerdict({
     seed: input.seed,
     alignment: input.target.alignment,
     traitPolarity,
-    attack: input.attack,
-    defense: input.defense,
+    attack,
+    defense,
     conductorBias: input.conductor.bias,
   });
+  const winnerSeat = legacy.winner === 'attack' ? input.attacker : input.defender;
+  const winnerName = input.players[winnerSeat].nickname;
   return {
-    winner: legacy.winner,
-    reason: legacy.reason,
-    winningArgument: legacy.winner === 'attack' ? (input.attack.trim() || legacy.coreArgument) : (input.defense.trim() || legacy.coreArgument),
+    winnerSeat,
+    conductorMessage: `行了，列车长替这场争论收个口。按“${input.conductor.rule}”这把尺子，${winnerName}这一轮更站得住，我判${winnerName}赢。`,
+    debateSummary: summarizeMessages(input, [input.attacker, input.defender]),
+    winningSummary: summarizeMessages(input, [winnerSeat]),
     fallback: true,
   };
 }
@@ -57,7 +72,7 @@ export function fallbackJudgment(input: JudgmentInput): PhilosophyJudgment {
   const describe = (seat: 'a' | 'b') => `${input.players[seat].nickname}选择了${input.tracks[seat].map((character) => character.name).join('、')}，并在三轮中留下${input.rounds.filter((round) => round.attacker === seat || round.defender === seat).length}次辩护痕迹。`;
   return {
     title: '列车离席之后',
-    summary: `六段辩词没有让生命变得可计算，只让${input.verdict.crushedSeat.toUpperCase()}轨成为了这次秩序的代价。`,
+    summary: `三轮聊天及其交锋摘要没有让生命变得可计算，只让${input.verdict.crushedSeat.toUpperCase()}轨成为了这次秩序的代价。`,
     playerA: `${describe('a')}功绩被当作筹码，过错也被当作方便的砝码。`,
     playerB: `${describe('b')}所谓原则，往往只在它不会压到自己时显得坚固。`,
     conductorCritique: `列车长以“${input.conductor.rule}”命名自己的偏见，再把${input.verdict.reason}称作判断。`,
