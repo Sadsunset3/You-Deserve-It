@@ -87,7 +87,7 @@ describe('authoritative three-round RoomManager', () => {
     store.close();
   });
 
-  it('stores both original speeches, accepts only the active roles, and appends only the winning argument', async () => {
+  it('locks the target for the attacker, orders concurrent messages, and appends only the winner summary', async () => {
     const store = new GameStore(':memory:');
     const rooms = new RoomManager(store, () => 0);
     const code = await startRoom(rooms);
@@ -95,18 +95,29 @@ describe('authoritative three-round RoomManager', () => {
     let room = rooms.get(code);
     const targetId = room.automaticCharacters.b!;
 
-    await expect(rooms.submitAttack(code, 'p2', room.version, targetId, '越权攻击')).rejects.toThrow('attack unavailable');
-    await rooms.submitAttack(code, 'p1', room.version, targetId, '他不值得活');
-    room = rooms.get(code);
-    await expect(rooms.submitDefense(code, 'p1', room.version, '越权防守')).rejects.toThrow('defense unavailable');
-    await rooms.submitDefense(code, 'p2', room.version, '他救过更多人');
-    room = rooms.get(code);
-    expect(room.phase).toBe('round-adjudicating');
-    await rooms.resolveRound(code, room.version, roundVerdict);
+    const startedAt = new Date('2026-08-15T00:00:00.000Z');
+    await expect(rooms.lockDebateTarget(code, 'p2', room.version, targetId, startedAt)).rejects.toThrow('target unavailable');
+    await rooms.lockDebateTarget(code, 'p1', room.version, targetId, startedAt);
+    expect(rooms.get(code).deadline).toBe('2026-08-15T00:05:00.000Z');
+
+    const [attack, defense] = await Promise.all([
+      rooms.appendDebateMessage(code, 'p1', 'attack-message', '他不值得活', new Date('2026-08-15T00:00:01.000Z')),
+      rooms.appendDebateMessage(code, 'p2', 'defense-message', '他救过更多人', new Date('2026-08-15T00:00:01.000Z')),
+    ]);
+    expect(new Set([attack.sequence, defense.sequence]).size).toBe(2);
+    const duplicate = await rooms.appendDebateMessage(code, 'p1', 'attack-message', '重复内容不会覆盖', new Date('2026-08-15T00:00:02.000Z'));
+    expect(duplicate.text).toBe('他不值得活');
+    expect(rooms.get(code).debateMessages).toHaveLength(2);
+
+    const [event] = await rooms.tick(new Date('2026-08-15T00:05:00.000Z'));
+    expect(event).toMatchObject({ type: 'round-adjudication', roomCode: code });
+    await expect(rooms.appendDebateMessage(code, 'p1', 'late', '来迟了', new Date('2026-08-15T00:05:00.000Z'))).rejects.toThrow('chat unavailable');
+    await rooms.resolveRound(code, event!.version, roundVerdict, new Date('2026-08-15T00:05:01.000Z'));
 
     room = rooms.get(code);
-    expect(room.roundRecords[0]).toMatchObject({ attack: { text: '他不值得活' }, defense: { text: '他救过更多人' }, verdict: roundVerdict });
-    expect(room.arguments[targetId]).toEqual([{ kind: 'defense', text: roundVerdict.winningArgument }]);
+    expect(room.roundRecords[0]).toMatchObject({ messages: [{ text: '他不值得活' }, { text: '他救过更多人' }], verdict: roundVerdict });
+    expect(room.arguments[targetId]).toEqual([{ kind: 'defense', text: roundVerdict.winningSummary }]);
+    expect(rooms.getTrackDecisionInput(code).rounds[0]?.verdict.debateSummary).toBe(roundVerdict.debateSummary);
     store.close();
   });
 
@@ -123,24 +134,24 @@ describe('authoritative three-round RoomManager', () => {
       let room = rooms.get(code);
       attackers.push(room.roundAttacker!);
       const attackerId = room.roundAttacker === 'a' ? 'p1' : 'p2';
-      const defenderId = room.roundAttacker === 'a' ? 'p2' : 'p1';
       const defenderSeat = room.roundAttacker === 'a' ? 'b' : 'a';
-      await rooms.submitAttack(code, attackerId, room.version, room.automaticCharacters[defenderSeat]!, `攻击${round}`);
-      room = rooms.get(code);
-      await rooms.submitDefense(code, defenderId, room.version, `防守${round}`);
-      room = rooms.get(code);
-      await rooms.resolveRound(code, room.version, roundVerdict);
-      room = rooms.get(code);
-      await rooms.advanceAfterRound(code, room.version);
+      const startedAt = new Date(`2026-08-15T00:${String(round * 10).padStart(2, '0')}:00.000Z`);
+      await rooms.lockDebateTarget(code, attackerId, room.version, room.automaticCharacters[defenderSeat]!, startedAt);
+      await rooms.appendDebateMessage(code, 'p1', `a-${round}`, `甲方消息${round}`, new Date(startedAt.getTime() + 1000));
+      await rooms.appendDebateMessage(code, 'p2', `b-${round}`, `乙方消息${round}`, new Date(startedAt.getTime() + 1000));
+      const [event] = await rooms.tick(new Date(startedAt.getTime() + 300_000));
+      await rooms.resolveRound(code, event!.version, roundVerdict, new Date(startedAt.getTime() + 301_000));
+      const events = await rooms.tick(new Date(startedAt.getTime() + 306_000));
       room = rooms.get(code);
       expect(room.selections).toEqual(fixedSelections);
       expect(room.automaticCharacters).toEqual(fixedAutomaticCharacters);
-      if (round < 3) expect(room.phase).toBe('attack-input');
+      if (round < 3) expect(room.phase).toBe('target-selecting');
+      else expect(events[0]).toMatchObject({ type: 'track-adjudication', roomCode: code });
     }
 
     expect(attackers).toEqual(['a', 'b', 'a']);
     expect(rooms.get(code)).toMatchObject({ phase: 'track-adjudicating', roundRecords: { length: 3 } });
-    expect(rooms.get(code).roundRecords.flatMap((round) => [round.attack, round.defense])).toHaveLength(6);
+    expect(rooms.get(code).roundRecords.flatMap((record) => record.messages)).toHaveLength(6);
     store.close();
   });
 
@@ -229,7 +240,7 @@ describe('authoritative three-round RoomManager', () => {
 
     room = rooms.get(code);
     await rooms.finishTraits(code, 'p2', room.version);
-    expect(rooms.get(code).phase).toBe('attack-input');
+    expect(rooms.get(code).phase).toBe('target-selecting');
     store.close();
   });
 
