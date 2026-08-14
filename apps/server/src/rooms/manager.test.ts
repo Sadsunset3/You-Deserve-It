@@ -1,22 +1,66 @@
-import { describe, expect, it } from 'vitest';
-import type { PhilosophyJudgment, RoundVerdict, TrackVerdict } from '@ydi/contracts';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { DebateRoundVerdict, GameConfig, PhilosophyJudgment, TrackVerdict } from '@ydi/contracts';
 import { catalog } from '../content/catalog';
 import { GameStore } from '../persistence/store';
 import { RoomManager } from './manager';
+import { migrateRoomSnapshot } from './types';
 
-const config = { games: 1, selectionSeconds: 20, traitSeconds: 20, speechSeconds: 30, disconnectSeconds: 60 };
-const roundVerdict: RoundVerdict = { winner: 'defense', reason: '防守事实更完整', winningArgument: '他仍有不可替代的价值', fallback: false };
+const config = { games: 1, timingMode: 'timed', selectionSeconds: 180, traitSeconds: 180, debateMinutes: 5 } satisfies GameConfig;
+const roundVerdict: DebateRoundVerdict = { winnerSeat: 'b', conductorMessage: '这轮乙方更站得住，我判乙方赢。', debateSummary: '甲方攻击人物过去，乙方强调人物仍有价值。', winningSummary: '他仍有不可替代的价值。', fallback: false };
 const trackVerdict: TrackVerdict = { crushedSeat: 'b', survivor: 'a', reason: '甲轨整体更值得保留', decisiveFactors: ['三轮论据'], fallback: false };
 const judgment: PhilosophyJudgment = { title: '最后的道岔', summary: '生命被迫成为比较题。', playerA: '甲方把功绩当筹码。', playerB: '乙方把悔恨当赎金。', conductorCritique: '列车长把偏见包装成秩序。', questions: ['功绩能抵罪吗？', '谁有资格定价？'], fallback: false };
 
-async function startRoom(rooms: RoomManager, games: 1 | 3 | 5 = 1) {
-  const created = await rooms.create('p1', '甲方', { ...config, games });
+async function startRoom(rooms: RoomManager, games: 1 | 3 | 5 = 1, overrides: Partial<GameConfig> = {}) {
+  const created = await rooms.create('p1', '甲方', { ...config, games, ...overrides });
   await rooms.join(created.roomCode, 'p2', '乙方');
   await rooms.ready(created.roomCode, 'p1');
   await rooms.ready(created.roomCode, 'p2');
   await rooms.start(created.roomCode, 'p1');
   return created.roomCode;
 }
+
+describe('room timing and snapshot migration', () => {
+  afterEach(() => vi.useRealTimers());
+
+  it('uses 180 seconds for the default timed selecting phase', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-15T00:00:00.000Z'));
+    const store = new GameStore(':memory:');
+    const rooms = new RoomManager(store, () => 0);
+    const code = await startRoom(rooms);
+    expect(rooms.get(code).deadline).toBe('2026-08-15T00:03:00.000Z');
+    store.close();
+  });
+
+  it('leaves selecting and trait placement without deadlines in unlimited mode', async () => {
+    const store = new GameStore(':memory:');
+    const rooms = new RoomManager(store, () => 0);
+    const code = await startRoom(rooms, 1, { timingMode: 'unlimited' });
+    expect(rooms.get(code).deadline).toBeNull();
+
+    let room = rooms.get(code);
+    await rooms.select(code, 'p1', room.version, room.hands.a!.characters.slice(0, 2).map(({ id }) => id));
+    room = rooms.get(code);
+    await rooms.select(code, 'p2', room.version, room.hands.b!.characters.slice(0, 2).map(({ id }) => id));
+    expect(rooms.get(code)).toMatchObject({ phase: 'traits', deadline: null });
+    store.close();
+  });
+
+  it('adds current timing defaults to an old waiting-room snapshot', () => {
+    const migrated = migrateRoomSnapshot({
+      phase: 'waiting', deadline: null,
+      config: { games: 1, selectionSeconds: 60, traitSeconds: 60, speechSeconds: 90, disconnectSeconds: 120 },
+    } as never);
+    expect(migrated.config).toEqual({ games: 1, timingMode: 'timed', selectionSeconds: 60, traitSeconds: 60, debateMinutes: 5 });
+  });
+
+  it('ends an active legacy attack room and requires a new game', () => {
+    const migrated = migrateRoomSnapshot({ phase: 'attack-input', deadline: '2026-08-15T00:01:00.000Z', config } as never);
+    expect(migrated.phase).toBe('match-end');
+    expect(migrated.deadline).toBeNull();
+    expect(migrated.finalResult?.reason).toContain('重新开局');
+  });
+});
 
 async function prepareDebate(rooms: RoomManager, code: string) {
   let room = rooms.get(code);

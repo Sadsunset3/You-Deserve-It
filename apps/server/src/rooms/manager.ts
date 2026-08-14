@@ -40,7 +40,8 @@ export class RoomManager {
       phase: 'waiting', version: 1, round: 1, game: 1, conductorId: null, hands: {},
       selections: { a: [], b: [] }, automaticCharacters: { a: null, b: null },
       usedCharacters: { a: [], b: [] }, usedTraits: { a: [], b: [] }, traitsDone: { a: false, b: false },
-      characterTraits: {}, arguments: {}, roundAttacker: null, currentTargetId: null, currentAttack: null, currentDefense: null,
+      characterTraits: {}, arguments: {}, roundAttacker: null, currentTargetId: null,
+      debateMessages: [], messageSequence: 0, roundVerdict: null,
       roundRecords: [], trackVerdict: null, judgment: null, nextGameReady: { a: false, b: false }, deadline: null,
       scores: { a: 0, b: 0 }, finalResult: null,
     };
@@ -80,7 +81,7 @@ export class RoomManager {
       room.usedCharacters[seat].push(...ids);
       if (room.selections.a.length === 2 && room.selections.b.length === 2) {
         room.phase = 'traits';
-        room.deadline = this.deadline(room.config.traitSeconds);
+        room.deadline = this.phaseDeadline(room, room.config.traitSeconds);
       }
     });
   }
@@ -100,8 +101,8 @@ export class RoomManager {
       if (room.phase !== 'traits') throw new Error('traits unavailable');
       room.traitsDone[seat] = true;
       if (room.traitsDone.a && room.traitsDone.b) {
-        room.phase = 'attack-input';
-        room.deadline = this.deadline(room.config.speechSeconds);
+        room.phase = 'target-selecting';
+        room.deadline = null;
       }
     });
   }
@@ -295,10 +296,10 @@ export class RoomManager {
     room.roundRecords = []; room.trackVerdict = null; room.judgment = null; room.finalResult = null; room.nextGameReady = { a: false, b: false };
     room.roundAttacker = this.random() < 0.5 ? 'a' : 'b';
     room.selections = { a: [], b: [] }; room.traitsDone = { a: false, b: false };
-    room.currentTargetId = null; room.currentAttack = null; room.currentDefense = null;
+    room.currentTargetId = null; room.debateMessages = []; room.messageSequence = 0; room.roundVerdict = null;
     this.dealAutomaticCharacters(room);
     room.phase = 'selecting';
-    room.deadline = this.deadline(room.config.selectionSeconds);
+    room.deadline = this.phaseDeadline(room, room.config.selectionSeconds);
   }
 
   private dealAutomaticCharacters(room: Room) {
@@ -316,7 +317,7 @@ export class RoomManager {
         const ids = room.hands[seat]!.characters.filter((card) => !room.usedCharacters[seat].includes(card.id)).slice(0, 2).map((card) => card.id);
         room.selections[seat] = ids; room.usedCharacters[seat].push(...ids);
       }
-      room.phase = 'traits'; room.deadline = new Date(now.getTime() + room.config.traitSeconds * 1000).toISOString(); return;
+      room.phase = 'traits'; room.deadline = this.phaseDeadline(room, room.config.traitSeconds, now); return;
     }
     if (room.phase === 'traits') { room.traitsDone = { a: true, b: true }; room.phase = 'attack-input'; room.deadline = new Date(now.getTime() + room.config.speechSeconds * 1000).toISOString(); return; }
     if (room.phase === 'attack-input') {
@@ -343,6 +344,9 @@ export class RoomManager {
   }
   private speech(room: Room, seat: Seat, role: 'attack' | 'defense', targetId: string, text: string): SpeechRecord { return { seat, role, targetId, text, round: room.round }; }
   private deadline(seconds: number) { return new Date(Date.now() + seconds * 1000).toISOString(); }
+  private phaseDeadline(room: Room, seconds: number, now = new Date()) {
+    return room.config.timingMode === 'unlimited' ? null : new Date(now.getTime() + seconds * 1000).toISOString();
+  }
   private player(room: Room, playerId: string) { const player = room.players.find((item) => item.playerId === playerId); if (!player) throw new Error('not in room'); return player; }
   private playerAt(room: Room, seat: Seat) { const player = room.players.find((item) => item.seat === seat); if (!player) throw new Error('player missing'); return player; }
   private findCharacter(id: string) { const card = catalog.characters.find((item) => item.id === id); if (!card) throw new Error(`character is missing: ${id}`); return card; }
