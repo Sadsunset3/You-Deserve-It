@@ -5,14 +5,14 @@ import rateLimit from '@fastify/rate-limit';
 import staticPlugin from '@fastify/static';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { apiKeySchema, createRoomSchema, joinRoomSchema } from '@ydi/contracts';
+import { apiKeySchema, appendDebateMessageSchema, createRoomSchema, joinRoomSchema, lockDebateTargetSchema } from '@ydi/contracts';
 import { validateCatalog, catalog } from './content/catalog.js';
 import { createAiGateway, testAiConnection, type AiGateway } from './ai/client.js';
 import { RoomAiKeyStore } from './ai/room-key-store.js';
 import { GameStore } from './persistence/store.js';
-import { RoomManager } from './rooms/manager.js';
+import { RoomManager, type RoomTickEvent } from './rooms/manager.js';
 import { Server as SocketServer } from 'socket.io';
-import { selectCharactersSchema, attachTraitSchema, submitSpeechSchema, commandSchema, targetSchema } from '@ydi/contracts';
+import { selectCharactersSchema, attachTraitSchema, commandSchema } from '@ydi/contracts';
 
 type AppOptions = {
   databasePath: string;
@@ -32,10 +32,9 @@ export async function buildApp(options: AppOptions) {
       const issue = (known as Error & { issues?: Array<{ path?: PropertyKey[] }> }).issues?.[0];
       const field = issue?.path?.at(-1);
       const messages: Partial<Record<PropertyKey, string>> = {
-        selectionSeconds: '选牌秒数必须在 20 到 120 秒之间',
-        traitSeconds: '词条秒数必须在 20 到 180 秒之间',
-        speechSeconds: '辩论秒数必须在 30 到 180 秒之间',
-        disconnectSeconds: '掉线判负秒数必须在 60 到 300 秒之间',
+        selectionSeconds: '选牌秒数必须在 20 到 540 秒之间',
+        traitSeconds: '词条秒数必须在 20 到 540 秒之间',
+        debateMinutes: '聊天室时长必须是 3 到 10 分钟的整数',
       };
       return reply.code(400).send({ error: field === undefined ? '提交的参数不符合要求' : messages[field] ?? '提交的参数不符合要求' });
     }
@@ -72,41 +71,47 @@ export async function buildApp(options: AppOptions) {
   app.post('/api/rooms/:code/trait', async (request) => { const code = (request.params as { code: string }).code; const body = attachTraitSchema.parse(request.body); await once(code, body.commandId, () => rooms.addTrait(code, identity(request), body.expectedVersion, body.traitId, body.targetId)); broadcast(code); return { ok: true }; });
   app.post('/api/rooms/:code/traits-done', async (request) => { const code = (request.params as { code: string }).code; const body = commandSchema.parse(request.body); await once(code, body.commandId, () => rooms.finishTraits(code, identity(request), body.expectedVersion)); broadcast(code); return { ok: true }; });
   app.post('/api/rooms/:code/surrender', async (request) => { const code = (request.params as { code: string }).code; const body = commandSchema.parse(request.body); await once(code, body.commandId, () => rooms.surrender(code, identity(request), body.expectedVersion)); broadcast(code); releaseKeyIfFinished(code); return { ok: true }; });
-  app.post('/api/rooms/:code/attack', async (request) => { const code = (request.params as { code: string }).code; const speech = submitSpeechSchema.merge(targetSchema).parse(request.body); await once(code, speech.commandId, () => rooms.submitAttack(code, identity(request), speech.expectedVersion, speech.targetId, speech.text)); broadcast(code); return { ok: true }; });
-  app.post('/api/rooms/:code/defend', async (request) => {
+  app.post('/api/rooms/:code/debate-target', async (request) => {
     const code = (request.params as { code: string }).code;
-    const speech = submitSpeechSchema.parse(request.body);
-    const performed = await once(code, speech.commandId, () => rooms.submitDefense(code, identity(request), speech.expectedVersion, speech.text));
-    broadcast(code);
-    if (!performed) return { ok: true };
-    const version = rooms.get(code).version;
-    const verdict = await aiForRoom(code).decideRound(rooms.getRoundDecisionInput(code));
-    await rooms.resolveRound(code, version, verdict);
+    const body = lockDebateTargetSchema.parse(request.body);
+    await once(code, body.commandId, () => rooms.lockDebateTarget(code, identity(request), body.expectedVersion, body.targetId));
     broadcast(code);
     return { ok: true };
   });
-  app.post('/api/rooms/:code/advance-round', async (request) => {
+  app.post('/api/rooms/:code/debate-messages', async (request) => {
     const code = (request.params as { code: string }).code;
-    const body = commandSchema.parse(request.body);
-    const performed = await once(code, body.commandId, () => rooms.advanceAfterRound(code, body.expectedVersion));
+    const body = appendDebateMessageSchema.parse(request.body);
+    const message = await rooms.appendDebateMessage(code, identity(request), body.messageId, body.text);
     broadcast(code);
-    if (!performed || rooms.get(code).phase !== 'track-adjudicating') return { ok: true };
-    let version = rooms.get(code).version;
-    const ai = aiForRoom(code);
-    const trackVerdict = await ai.decideTrack(rooms.getTrackDecisionInput(code));
-    await rooms.resolveTrack(code, version, trackVerdict);
-    broadcast(code);
-    version = rooms.get(code).version;
-    const judgment = await ai.judgeMatch(rooms.getJudgmentInput(code));
-    await rooms.saveJudgment(code, version, judgment);
-    broadcast(code);
-    return { ok: true };
+    return { message };
   });
   app.post('/api/rooms/:code/ready-next-game', async (request) => { const code = (request.params as { code: string }).code; const body = commandSchema.parse(request.body); await once(code, body.commandId, () => rooms.readyNextGame(code, identity(request), body.expectedVersion)); broadcast(code); releaseKeyIfFinished(code); return { ok: true }; });
   const io = new SocketServer(app.server, { path: '/socket.io', cors: { origin: options.webOrigin ?? true, credentials: true } });
-  io.on('connection', (socket) => { let subscribed: { roomCode: string; playerId: string } | null = null; socket.on('room:subscribe', ({ roomCode, playerId }: { roomCode: string; playerId: string }) => { try { rooms.view(roomCode, playerId); subscribed = { roomCode, playerId }; rooms.setConnected(roomCode, playerId, true); socket.join(`${roomCode}:${playerId}`); broadcast(roomCode); } catch { socket.emit('room:error', { error: '无法订阅该房间' }); } }); socket.on('disconnect', () => { if (!subscribed) return; const stillConnected = Array.from(io.sockets.sockets.values()).some((candidate) => candidate.id !== socket.id && candidate.rooms.has(`${subscribed!.roomCode}:${subscribed!.playerId}`)); if (!stillConnected) { try { rooms.setConnected(subscribed.roomCode, subscribed.playerId, false); broadcast(subscribed.roomCode); } catch (error) { app.log.debug({ error }, 'ignored disconnect after room disposal'); } } }); });
+  io.on('connection', (socket) => { let subscribed: { roomCode: string; playerId: string } | null = null; socket.on('room:subscribe', ({ roomCode, playerId }: { roomCode: string; playerId: string }) => { try { rooms.view(roomCode, playerId); subscribed = { roomCode, playerId }; rooms.setConnected(roomCode, playerId, true); socket.join(`${roomCode}:${playerId}`); broadcast(roomCode); } catch { socket.emit('room:error', { error: '无法订阅该房间' }); } }); socket.on('disconnect', () => { if (!subscribed) return; const stillConnected = Array.from(io.sockets.sockets.values()).some((candidate) => candidate.id !== socket.id && candidate.rooms.has(`${subscribed!.roomCode}:${subscribed!.playerId}`)); if (!stillConnected) { try { rooms.setConnected(subscribed.roomCode, subscribed.playerId, false); broadcast(subscribed.roomCode); releaseKeyIfFinished(subscribed.roomCode); } catch (error) { app.log.debug({ error }, 'ignored disconnect after room disposal'); } } }); });
   app.addHook('onClose', async () => io.close());
-  const scheduler = setInterval(() => { store.cleanup(); rooms.advanceExpired().then(() => { for (const code of aiKeys.codes()) releaseKeyIfFinished(code); for (const code of new Set(Array.from(io.sockets.sockets.values()).flatMap((socket) => Array.from(socket.rooms).map((room) => room.split(':')[0]!)))) { try { broadcast(code); } catch (error) { app.log.debug({ error }, 'ignored broadcast after room disposal'); } } }).catch((error) => app.log.error({ error }, 'room scheduler failed')); }, 1000);
+  const processTickEvent = async (event: RoomTickEvent) => {
+    const ai = aiForRoom(event.roomCode);
+    if (event.type === 'round-adjudication') {
+      const verdict = await ai.decideRound(event.input);
+      await rooms.resolveRound(event.roomCode, event.version, verdict);
+      broadcast(event.roomCode);
+      return;
+    }
+    const trackVerdict = await ai.decideTrack(event.input);
+    await rooms.resolveTrack(event.roomCode, event.version, trackVerdict);
+    broadcast(event.roomCode);
+    const judgmentVersion = rooms.get(event.roomCode).version;
+    const judgment = await ai.judgeMatch(rooms.getJudgmentInput(event.roomCode));
+    await rooms.saveJudgment(event.roomCode, judgmentVersion, judgment);
+    broadcast(event.roomCode);
+  };
+  const runScheduler = async () => {
+    store.cleanup();
+    for (const event of await rooms.tick()) await processTickEvent(event);
+    for (const code of aiKeys.codes()) releaseKeyIfFinished(code);
+    for (const code of new Set(Array.from(io.sockets.sockets.values()).flatMap((socket) => Array.from(socket.rooms).map((room) => room.split(':')[0]!)))) { try { broadcast(code); } catch (error) { app.log.debug({ error }, 'ignored broadcast after room disposal'); } }
+  };
+  const scheduler = setInterval(() => { void runScheduler().catch((error) => app.log.error({ error }, 'room scheduler failed')); }, 1000);
   scheduler.unref();
   app.addHook('onClose', async () => clearInterval(scheduler));
   const webRoot = options.webRoot ?? resolve(process.cwd(), '../../apps/web/dist');

@@ -274,4 +274,23 @@ describe('authoritative three-round RoomManager', () => {
     expect(rooms.get(code)).toMatchObject({ phase: 'match-end', scores: { a: 0, b: 1 }, finalResult: { survivor: 'b' } });
     store.close();
   });
+
+  it('only updates presence in waiting but immediately ends an active match on disconnect', async () => {
+    const store = new GameStore(':memory:');
+    const rooms = new RoomManager(store, () => 0);
+    const waiting = await rooms.create('p1', '甲方', config);
+    await rooms.join(waiting.roomCode, 'p2', '乙方');
+    rooms.setConnected(waiting.roomCode, 'p2', false);
+    expect(rooms.get(waiting.roomCode)).toMatchObject({ phase: 'waiting', players: [{ connected: true }, { connected: false }] });
+
+    rooms.setConnected(waiting.roomCode, 'p2', true);
+    await rooms.ready(waiting.roomCode, 'p1');
+    await rooms.ready(waiting.roomCode, 'p2');
+    await rooms.start(waiting.roomCode, 'p1');
+    rooms.setConnected(waiting.roomCode, 'p2', false);
+    expect(rooms.get(waiting.roomCode)).toMatchObject({ phase: 'match-end', scores: { a: 1, b: 0 }, finalResult: { survivor: 'a' } });
+    rooms.setConnected(waiting.roomCode, 'p2', true);
+    expect(rooms.get(waiting.roomCode).phase).toBe('match-end');
+    store.close();
+  });
 });

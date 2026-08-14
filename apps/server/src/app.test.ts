@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import type { AiGateway } from './ai/client';
 import { RoomAiKeyStore } from './ai/room-key-store';
 
-const config = { games: 1, selectionSeconds: 20, traitSeconds: 20, speechSeconds: 30, disconnectSeconds: 60 };
+const config = { games: 1, timingMode: 'timed', selectionSeconds: 180, traitSeconds: 180, debateMinutes: 5 } as const;
 const command = (index: number, expectedVersion: number) => ({ commandId: `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`, expectedVersion });
 const cookie = (response: { cookies: Array<{ name: string; value: string }> }) => response.cookies.map((item) => `${item.name}=${item.value}`).join('; ');
 
@@ -22,7 +22,7 @@ describe('HTTP app', () => {
   it('creates a player session and room without registration', async () => {
     const aiKeys = new RoomAiKeyStore();
     const app = await buildApp({ databasePath: ':memory:', sessionSecret: '12345678901234567890123456789012', aiKeys }); apps.push(app);
-    const response = await app.inject({ method: 'POST', url: '/api/rooms', payload: { nickname: '甲方', config: { games: 1, selectionSeconds: 20, traitSeconds: 20, speechSeconds: 30, disconnectSeconds: 60 }, apiKey: 'room-secret' } });
+    const response = await app.inject({ method: 'POST', url: '/api/rooms', payload: { nickname: '甲方', config, apiKey: 'room-secret' } });
     expect(response.statusCode).toBe(201); expect(response.cookies.some((cookie) => cookie.name === 'ydi_session')).toBe(true); expect(response.json().roomCode).toMatch(/^[A-Z2-9]{6}$/);
     expect(aiKeys.get(response.json().roomCode)).toBe('room-secret');
     expect(JSON.stringify(app.rooms.get(response.json().roomCode))).not.toContain('room-secret');
@@ -65,18 +65,18 @@ describe('HTTP app', () => {
       payload: {
         nickname: '甲方',
         apiKey: 'room-secret',
-        config: { ...config, disconnectSeconds: 500 },
+        config: { ...config, debateMinutes: 11 },
       },
     });
 
     expect(response.statusCode).toBe(400);
-    expect(response.json().error).toContain('掉线判负秒数必须在 60 到 300 秒之间');
+    expect(response.json().error).toContain('聊天室时长必须是 3 到 10 分钟的整数');
   });
 
-  it('persists defense before AI work and completes the round with the structured verdict', async () => {
+  it('accepts concurrent chat messages and adjudicates the frozen room after its deadline', async () => {
     let roundCalls = 0;
     const aiGateway: AiGateway = {
-      decideRound: async () => { roundCalls++; return { winner: 'defense', reason: '防守成立', winningArgument: '他保护过无辜者', fallback: false }; },
+      decideRound: async () => { roundCalls++; return { winnerSeat: 'b', conductorMessage: '这轮乙方说得更实在，我判乙方赢。', debateSummary: '甲方质疑价值，乙方强调救人事实。', winningSummary: '他保护过无辜者。', fallback: false }; },
       decideTrack: async () => ({ crushedSeat: 'b', survivor: 'a', reason: '甲轨胜出', decisiveFactors: ['事实'], fallback: false }),
       judgeMatch: async () => ({ title: '审判', summary: '总结', playerA: '甲', playerB: '乙', conductorCritique: '列车长', questions: ['为什么？', '凭什么？'], fallback: false }),
     };
@@ -101,13 +101,26 @@ describe('HTTP app', () => {
     await app.inject({ method: 'POST', url: `/api/rooms/${code}/traits-done`, headers: { cookie: bCookie }, payload: command(4, room.version) });
     room = app.rooms.get(code);
     const attackerCookie = room.roundAttacker === 'a' ? aCookie : bCookie;
-    const defenderCookie = room.roundAttacker === 'a' ? bCookie : aCookie;
     const defenderSeat = room.roundAttacker === 'a' ? 'b' : 'a';
-    await app.inject({ method: 'POST', url: `/api/rooms/${code}/attack`, headers: { cookie: attackerCookie }, payload: { ...command(5, room.version), targetId: room.automaticCharacters[defenderSeat], text: '他不值得活' } });
-    room = app.rooms.get(code);
-    const defended = await app.inject({ method: 'POST', url: `/api/rooms/${code}/defend`, headers: { cookie: defenderCookie }, payload: { ...command(6, room.version), text: '他保护过无辜者' } });
+    const defenderCookie = room.roundAttacker === 'a' ? bCookie : aCookie;
+    const rejected = await app.inject({ method: 'POST', url: `/api/rooms/${code}/debate-target`, headers: { cookie: defenderCookie }, payload: { ...command(5, room.version), targetId: room.automaticCharacters[defenderSeat] } });
+    expect(rejected.statusCode).toBe(409);
+    const locked = await app.inject({ method: 'POST', url: `/api/rooms/${code}/debate-target`, headers: { cookie: attackerCookie }, payload: { ...command(6, room.version), targetId: room.automaticCharacters[defenderSeat] } });
+    expect(locked.statusCode).toBe(200);
 
-    expect(defended.statusCode).toBe(200);
+    const firstId = '10000000-0000-4000-8000-000000000001';
+    const secondId = '10000000-0000-4000-8000-000000000002';
+    const [first, second] = await Promise.all([
+      app.inject({ method: 'POST', url: `/api/rooms/${code}/debate-messages`, headers: { cookie: attackerCookie }, payload: { messageId: firstId, text: '他不值得活' } }),
+      app.inject({ method: 'POST', url: `/api/rooms/${code}/debate-messages`, headers: { cookie: defenderCookie }, payload: { messageId: secondId, text: '他保护过无辜者' } }),
+    ]);
+    expect(first.statusCode).toBe(200);
+    expect(second.statusCode).toBe(200);
+    const duplicate = await app.inject({ method: 'POST', url: `/api/rooms/${code}/debate-messages`, headers: { cookie: attackerCookie }, payload: { messageId: firstId, text: '重复消息' } });
+    expect(duplicate.json().message.text).toBe('他不值得活');
+    app.rooms.get(code).deadline = new Date(Date.now() - 1).toISOString();
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+
     expect(roundCalls).toBe(1);
     expect(usedKeys).toEqual(['round-room-key']);
     expect(app.rooms.get(code)).toMatchObject({ phase: 'round-result', roundRecords: { length: 1 } });

@@ -259,12 +259,18 @@ export class RoomManager {
 
   async advanceExpired(now = new Date()) { return this.tick(now); }
 
-  setConnected(code: string, playerId: string, connected: boolean, now = new Date()) {
+  setConnected(code: string, playerId: string, connected: boolean) {
     const room = this.require(code);
     const player = room.players.find((item) => item.playerId === playerId);
     if (!player) return;
     player.connected = connected;
-    if (connected) delete player.disconnectedAt; else player.disconnectedAt = now.toISOString();
+    if (!connected && room.players.length === 2 && room.phase !== 'waiting' && room.phase !== 'match-end') {
+      const survivor = otherSeat(player.seat);
+      room.scores[survivor]++;
+      room.phase = 'match-end';
+      room.deadline = null;
+      room.finalResult = { survivor, reason: `${player.nickname}已掉线，对方直接获胜。`, philosophy: '连接断开的那一刻，列车没有继续等待。' };
+    }
     room.version++;
     this.persist(room);
   }
