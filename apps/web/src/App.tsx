@@ -7,9 +7,10 @@ import { CharacterCard } from './game/CharacterCard';
 import { usePointerDrag, type DropTarget } from './game/use-pointer-drag';
 import { GameStage } from './game/GameStage';
 import { CharacterDetailDrawer } from './game/CharacterDetailDrawer';
+import { RoomPresence } from './game/RoomPresence';
 import './styles.css';
 
-const defaultConfig: GameConfig = { games: 1, selectionSeconds: 60, traitSeconds: 60, speechSeconds: 90, disconnectSeconds: 120 };
+const defaultConfig: GameConfig = { games: 1, timingMode: 'timed', selectionSeconds: 180, traitSeconds: 180, debateMinutes: 5 };
 const phaseTitle: Record<string, string> = { waiting: '等待另一位被告', selecting: '选择两名人物', traits: '追加人物词条', 'attack-a': '甲方发起攻击', 'defense-b': '乙方提交防守', 'attack-b': '乙方发起攻击', 'defense-a': '甲方提交防守', 'match-end': '审判结束' };
 
 export function App() {
@@ -74,7 +75,7 @@ function HomeScreen({ nickname, setNickname, code, setCode, mode, setMode, confi
       {mode === 'join' ? <label>六位房间码<input className="code-input" value={code} onChange={(event) => setCode(event.target.value)} maxLength={6} placeholder="ABC234" /></label> : <><RuleForm value={config} onChange={setConfig}/><div className="api-key-check"><label>DeepSeek Key<input type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} maxLength={512} autoComplete="off" placeholder="sk-..." /></label><button type="button" disabled={testingApiKey || apiKey.trim().length === 0} onClick={() => void testDeepSeekKey()}>{testingApiKey ? '正在测试…' : '测试连接'}</button>{apiKeyReady && <p role="status">连接成功，可以创建房间</p>}<small>Key 仅保存在本房间的服务端内存中，整场结束后删除。</small></div></>} 
       {error && <p role="alert" className="error">{error}</p>}
       <button className="primary entry-submit" disabled={busy || nickname.trim().length < 2 || (mode === 'join' ? code.length !== 6 : !apiKeyReady)} onClick={() => void enter()}>{busy ? '正在打开审判室…' : mode === 'create' ? '创建审判室' : '加入这场审判'}</button>
-      <p className="fineprint">辩词提交后不可修改，列车长不会替你保留体面。</p>
+      <p className="fineprint">开局后刷新、关闭页面或断开连接会立即判负，原局无法恢复。</p>
     </section>
 
     <article className="case-record" aria-labelledby="record-title">
@@ -85,14 +86,24 @@ function HomeScreen({ nickname, setNickname, code, setCode, mode, setMode, confi
   </main>;
 }
 
-function RuleForm({ value, onChange }: { value: GameConfig; onChange(value: GameConfig): void }) { const field = (key: Exclude<keyof GameConfig, 'games'>, label: string, min: number, max: number) => <label>{label}<input type="number" min={min} max={max} value={value[key]} onChange={(e) => { const entered = Math.trunc(Number(e.target.value)); onChange({ ...value, [key]: Math.min(max, Math.max(min, Number.isFinite(entered) ? entered : min)) }); }}/></label>; return <div className="rules"><h2>本场规则</h2><label>比赛局数<select value={value.games} onChange={(event) => onChange({ ...value, games: Number(event.target.value) as GameConfig['games'] })}><option value={1}>1</option><option value={3}>3</option><option value={5}>5</option></select></label>{field('selectionSeconds', '选牌秒数', 20, 120)}{field('traitSeconds', '词条秒数', 20, 180)}{field('speechSeconds', '辩论秒数', 30, 180)}{field('disconnectSeconds', '掉线判负秒数', 60, 300)}</div>; }
+function RuleForm({ value, onChange }: { value: GameConfig; onChange(value: GameConfig): void }) {
+  const field = (key: 'selectionSeconds' | 'traitSeconds', label: string) => <label>{label}<input type="number" min={20} max={540} disabled={value.timingMode === 'unlimited'} value={value[key]} onChange={(event) => { const entered = Math.trunc(Number(event.target.value)); onChange({ ...value, [key]: Math.min(540, Math.max(20, Number.isFinite(entered) ? entered : 20)) }); }}/></label>;
+  return <div className="rules">
+    <h2>本场规则</h2>
+    <label>比赛局数<select value={value.games} onChange={(event) => onChange({ ...value, games: Number(event.target.value) as GameConfig['games'] })}><option value={1}>1</option><option value={3}>3</option><option value={5}>5</option></select></label>
+    <fieldset className="timing-mode"><legend>选人和词条计时</legend><label><input type="radio" name="timing-mode" checked={value.timingMode === 'timed'} onChange={() => onChange({ ...value, timingMode: 'timed' })} />限时</label><label><input type="radio" name="timing-mode" checked={value.timingMode === 'unlimited'} onChange={() => onChange({ ...value, timingMode: 'unlimited' })} />不限时</label></fieldset>
+    {field('selectionSeconds', '选牌秒数')}
+    {field('traitSeconds', '词条秒数')}
+    <label>攻防聊天室分钟<select value={value.debateMinutes} onChange={(event) => onChange({ ...value, debateMinutes: Number(event.target.value) as GameConfig['debateMinutes'] })}>{[3, 4, 5, 6, 7, 8, 9, 10].map((minutes) => <option value={minutes} key={minutes}>{minutes}</option>)}</select></label>
+  </div>;
+}
 
 export function RoomScreen({ room, send, leave, error = '' }: { room: RoomView; send(action: string, body?: object): Promise<void>; leave?(): void; error?: string }) {
   const [surrendering, setSurrendering] = useState(false); const remaining = useCountdown(room.deadline);
   const command = () => ({ commandId: crypto.randomUUID(), expectedVersion: room.version });
   const surrender = async () => { if (surrendering || !window.confirm('确认投降并退出吗？比赛会立即结束，对方直接获胜。')) return; setSurrendering(true); try { await send('surrender', command()); leave?.(); } finally { setSurrendering(false); } };
   if (room.phase !== 'waiting' && room.phase !== 'traits') return <GameStage room={room} send={send} leave={leave} error={error} />;
-  const header = <><header className="case-header"><div><span>审判室</span><strong>{room.roomCode}</strong></div><h1>{phaseTitle[room.phase] ?? room.phase}</h1><div className="timer" aria-live="polite">{remaining === null ? '等待' : `${remaining}s`}</div></header><section className="status-strip"><span>第 {room.game}/{room.config.games} 局</span><span>第 {room.round}/3 次攻防</span><span>比分 {room.scores.a}:{room.scores.b}</span>{room.phase !== 'waiting' && room.opponentRemaining && <><span>对手好人 {room.opponentRemaining.good}</span><span>对手恶人 {room.opponentRemaining.evil}</span><span>对手词条 {room.opponentRemaining.traits}</span></>}<span>{room.opponent ? `${room.opponent.nickname} · ${room.opponent.connected ? '在线' : '掉线'}` : '等待对手'}</span>{room.phase !== 'waiting' && <button className="surrender-button" disabled={surrendering} onClick={() => void surrender().catch(() => undefined)}>{surrendering ? '正在投降…' : '投降并退出'}</button>}</section></>;
+  const header = <><header className="case-header"><div><span>审判室</span><strong>{room.roomCode}</strong></div><h1>{phaseTitle[room.phase] ?? room.phase}</h1><div className="timer" aria-live="polite">{remaining === null ? '等待' : `${remaining}s`}</div></header><section className="status-strip"><span>第 {room.game}/{room.config.games} 局</span><span>第 {room.round}/3 次攻防</span><span>比分 {room.scores.a}:{room.scores.b}</span>{room.phase !== 'waiting' && room.opponentRemaining && <><span>对手好人 {room.opponentRemaining.good}</span><span>对手恶人 {room.opponentRemaining.evil}</span><span>对手词条 {room.opponentRemaining.traits}</span></>}<RoomPresence room={room}/>{room.phase !== 'waiting' && <button className="surrender-button" disabled={surrendering} onClick={() => void surrender().catch(() => undefined)}>{surrendering ? '正在投降…' : '投降并退出'}</button>}</section></>;
   if (room.phase === 'waiting') return <main className="game-shell waiting-shell">{header}{error && <p role="alert" className="error banner">{error}</p>}<Waiting room={room} send={send}/></main>;
   const controls = <TraitPlacement room={room} send={send} command={command}/>;
   return <main className="game-shell"><TrainStage room={room}>{header}{error && <p role="alert" className="error banner">{error}</p>}{controls}</TrainStage></main>;

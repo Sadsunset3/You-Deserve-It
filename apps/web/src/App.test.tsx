@@ -19,10 +19,10 @@ function makeRoom(overrides: Partial<RoomView> = {}): RoomView {
     version: 2,
     round: 1,
     game: 1,
-    config: { games: 1, selectionSeconds: 20, traitSeconds: 20, speechSeconds: 30, disconnectSeconds: 60 },
+    config: { games: 1, timingMode: 'timed', selectionSeconds: 180, traitSeconds: 180, debateMinutes: 5 },
     conductor: { id: 'conductor-1', name: '铁面列车长', persona: '冷静审视每一种选择。', rule: '事实优先。', bias: 0 },
     deadline: null,
-    me: { playerId: 'p1', nickname: '甲方玩家', seat: 'a', ready: true },
+    me: { playerId: 'p1', nickname: '甲方玩家', seat: 'a', ready: true, connected: true },
     opponent: { nickname: '乙方玩家', ready: true, connected: true },
     opponentRemaining: { good: 1, evil: 1, traits: 2 },
     traitReadiness: { mine: false, opponent: false },
@@ -30,16 +30,15 @@ function makeRoom(overrides: Partial<RoomView> = {}): RoomView {
     selections: { mine: [], opponent: [] },
     automaticCharacters: { mine: null, opponent: null },
     characters: [],
-    activeSpeaker: null,
     roundAttacker: null,
     currentTargetId: null,
+    debateMessages: [],
+    messageSequence: 0,
+    roundVerdict: null,
     roundRecords: [],
-    currentAttack: null,
     trackVerdict: null,
     judgment: null,
     nextGameReady: { a: false, b: false },
-    attackText: null,
-    verdict: null,
     scores: { a: 0, b: 0 },
     finalResult: null,
     ...overrides,
@@ -87,16 +86,30 @@ describe('player web', () => {
     expect(within(games).getAllByRole('option').map((option) => option.getAttribute('value'))).toEqual(['1', '3', '5']);
   });
 
-  it('clamps manually entered rule durations to the supported range', () => {
+  it('uses tripled phase defaults and integer debate minutes without disconnect grace', () => {
     render(<App />);
 
     const selection = screen.getByLabelText('选牌秒数');
-    const disconnect = screen.getByLabelText('掉线判负秒数');
-    fireEvent.change(selection, { target: { value: '500' } });
-    fireEvent.change(disconnect, { target: { value: '500' } });
+    const traits = screen.getByLabelText('词条秒数');
+    const debate = screen.getByLabelText('攻防聊天室分钟');
 
-    expect(selection).toHaveValue(120);
-    expect(disconnect).toHaveValue(300);
+    expect(selection).toHaveValue(180);
+    expect(traits).toHaveValue(180);
+    expect(debate).toHaveValue('5');
+    expect(within(debate).getAllByRole('option').map((option) => option.getAttribute('value'))).toEqual(['3', '4', '5', '6', '7', '8', '9', '10']);
+    expect(screen.queryByLabelText('掉线判负秒数')).not.toBeInTheDocument();
+
+    fireEvent.change(selection, { target: { value: '999' } });
+    expect(selection).toHaveValue(540);
+  });
+
+  it('disables only selecting and trait durations when unlimited is chosen', () => {
+    render(<App />);
+    fireEvent.click(screen.getByLabelText('不限时'));
+
+    expect(screen.getByLabelText('选牌秒数')).toBeDisabled();
+    expect(screen.getByLabelText('词条秒数')).toBeDisabled();
+    expect(screen.getByLabelText('攻防聊天室分钟')).toBeEnabled();
   });
 
   it('requires a successful DeepSeek key test before creating a room', async () => {
@@ -158,7 +171,7 @@ describe('selecting train stage', () => {
     render(<RoomScreen room={makeRoom({
       game: 2,
       round: 3,
-      config: { games: 5, selectionSeconds: 20, traitSeconds: 20, speechSeconds: 30, disconnectSeconds: 60 },
+      config: { games: 5, timingMode: 'timed', selectionSeconds: 180, traitSeconds: 180, debateMinutes: 5 },
       scores: { a: 1, b: 2 },
       opponentRemaining: { good: 3, evil: 1, traits: 4 },
     })} send={async () => {}} />);
