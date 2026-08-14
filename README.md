@@ -1,12 +1,16 @@
-# 《活该》网页游戏 MVP
+# You Deserve It (《活该》) — Web Game MVP
 
-一款房间码邀请的在线双人 AI 道德辩论游戏。每条轨道由系统随机放置一名好人，玩家再放置两名人物；双方进行三轮攻防并留下六段不可修改的辩词，最终接受 AI 列车长的压轨决定与共同的黑暗哲学审判。
+[**English**](README.md) · [简体中文](README.zh-CN.md) · [Español](README.es.md) · [Français](README.fr.md) · [Deutsch](README.de.md) · [日本語](README.ja.md)
 
-比赛舞台固定在一个 `100dvh` 屏幕内。首轮攻方随机，之后逐轮互换；攻击、等待、防守和回合结果均在弹窗中完成。DeepSeek 会分别处理单回合胜负、整条轨道生死和赛后反讽评议，输入包含列车长人设、人物姓名与背景、词条、胜出论据以及全部辩词。玩家可随时投降，整场按房间设置局数累计幸存积分。
+An online two-player AI moral debate game, invited by room code. On each track the system randomly places one "good" person, and each player places two characters of their own; both sides fight three rounds of attack and defense, leaving six immutable arguments, then accept the AI conductor's final track decision and a shared dark philosophical verdict.
 
-## 本地运行
+**Try the live demo:** https://game.sadsunset.cloud/
 
-要求 Node.js 24+、pnpm 11+。
+The stage is fixed within a single `100dvh` screen. The first-round attacker is random and alternates round by round; attacks, waits, defenses, and round results all happen in modals. DeepSeek separately handles single-round win/loss, whole-track life-or-death, and post-match ironic commentary, with input that includes the conductor's persona, character names and backgrounds, trait cards, winning arguments, and all arguments. Players may surrender at any time, and survival points accumulate across the number of rounds set per room.
+
+## Running locally
+
+Requires Node.js 24+ and pnpm 11+.
 
 ```powershell
 Copy-Item .env.example .env
@@ -14,29 +18,29 @@ pnpm install
 pnpm dev
 ```
 
-开发模式前端位于 `http://localhost:5173`，API 位于 `http://localhost:3000`。AI 使用 DeepSeek 官方 OpenAI 兼容接口，默认模型为 `deepseek-v4-flash`。房主每次创建房间前必须输入并测试自己的 DeepSeek Key；Key 只保存在该房间的服务端内存中，整场结束后删除。
+In development, the frontend is at `http://localhost:5173` and the API at `http://localhost:3000`. The AI uses DeepSeek's official OpenAI-compatible interface, defaulting to the `deepseek-v4-flash` model. The host must enter and test their own DeepSeek key before creating a room; the key is kept only in that room's server memory and is deleted when the game ends.
 
-## 生产运行
+## Production
 
 ```powershell
 pnpm build
-$env:SESSION_SECRET='至少32位的随机字符串'
+$env:SESSION_SECRET='a random string of at least 32 characters'
 pnpm start
 ```
 
-生产服务同源托管网页、REST 和 Socket.IO。公网部署必须在 HTTPS 反向代理后运行，并把 `/socket.io` 配置为 WebSocket 升级。SQLite 数据默认写入 `data/game.db`。
+The production server serves the web page, REST API, and Socket.IO from the same origin. Public deployments must run behind an HTTPS reverse proxy with `/socket.io` configured for WebSocket upgrades. SQLite data is written to `data/game.db` by default.
 
 ## Docker
 
-创建 `.env` 并至少填写 `SESSION_SECRET`：
+Create `.env` and fill in at least `SESSION_SECRET`:
 
 ```powershell
 docker compose up --build
 ```
 
-数据保存在 `game-data` 卷。备份时停止新房间或暂停容器，然后复制该卷中的 `game.db`、`game.db-wal` 和 `game.db-shm`。
+Data is stored in the `game-data` volume. To back up, stop new rooms or pause the container, then copy `game.db`, `game.db-wal`, and `game.db-shm` from that volume.
 
-## 验证
+## Verification
 
 ```powershell
 pnpm test
@@ -45,4 +49,4 @@ pnpm lint
 pnpm build
 ```
 
-正式浏览器验收基准为 1280×720 及以上桌面视口。小屏会提示使用横屏或桌面设备。
+The formal browser acceptance baseline is desktop viewports of 1280×720 and above. Small screens are prompted to use landscape mode or a desktop device.
