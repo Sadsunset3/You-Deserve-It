@@ -32,7 +32,7 @@ describe('fallback verdict', () => {
       ],
       verdict: { winnerSeat: roundNumber === 2 ? 'b' as const : 'a' as const, conductorMessage: `第${roundNumber}轮裁决`, debateSummary: `第${roundNumber}轮双方摘要`, winningSummary: `第${roundNumber}轮胜方摘要`, fallback: false },
     }));
-    const track: TrackDecisionInput = { seed: 't', conductor, tracks: { a: [character], b: [{ ...character, id: 'e', alignment: 'evil', name: '小偷', background: '偷钱' }] }, rounds };
+    const track: TrackDecisionInput = { seed: 't', conductor, players: { a: { nickname: '甲' }, b: { nickname: '乙' } }, tracks: { a: [character], b: [{ ...character, id: 'e', alignment: 'evil', name: '小偷', background: '偷钱' }] }, rounds };
     const judgment: JudgmentInput = { ...track, players: { a: { nickname: '甲' }, b: { nickname: '乙' } }, verdict: fallbackTrackVerdict(track) };
 
     const roundVerdict = fallbackRoundVerdict(round);
@@ -48,7 +48,9 @@ describe('fallback verdict', () => {
     expect(poem.stanzas).toHaveLength(5);
     expect(poem.stanzas.flatMap((stanza) => stanza.lines)).toHaveLength(10);
     expect(poem.stanzas[3]?.lines.join('')).toContain('消防员');
-    expect(poem.stanzas[4]?.lines.join('')).toContain(judgment.verdict.crushedSeat.toUpperCase());
+    expect(poem.stanzas[0]?.lines.join('')).toContain(judgment.players[judgment.verdict.crushedSeat].nickname);
+    expect(poem.stanzas[0]?.lines.join('')).toContain('所在的轨道');
+    expect(poem.stanzas.flatMap((stanza) => stanza.lines).join('')).not.toContain(`${judgment.verdict.crushedSeat.toUpperCase()}轨`);
     expect(poem.stanzas[1]?.lines.join('')).toContain('甲方第1轮论点');
     expect(poem.stanzas[1]?.lines.join('')).toContain('甲方第3轮论点');
     expect(poem.stanzas[2]?.lines.join('')).toContain('乙方第1轮论点');

@@ -5,13 +5,14 @@ import { philosophyJudgmentSchema, roundVerdictSchema, trackVerdictSchema } from
 import { fallbackJudgment, fallbackRoundVerdict, fallbackTrackVerdict } from './fallback.js';
 import { buildJudgmentMessages, buildRoundMessages, buildTrackMessages, type CompletionMessage } from './prompts.js';
 
-type CompletionPayload = OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming & { thinking: { type: 'disabled' } };
+type CompletionPayload = OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming & { thinking?: { type: 'disabled' } };
 type CompletionResponse = { choices: Array<{ message: { content: string | null } }> };
 type Options = {
   apiKey?: string;
   baseURL?: string;
   model?: string;
   timeoutMs?: number;
+  thinking?: boolean;
   request?: (input: RoundDecisionInput) => Promise<unknown>;
   createCompletion?: (payload: CompletionPayload) => Promise<CompletionResponse>;
 };
@@ -28,6 +29,7 @@ export function resolveAiConfig(options: Options = {}) {
     baseURL: options.baseURL ?? process.env.DEEPSEEK_BASE_URL ?? process.env.OPENAI_BASE_URL ?? 'https://api.deepseek.com',
     model: options.model ?? process.env.DEEPSEEK_MODEL ?? process.env.OPENAI_MODEL ?? 'deepseek-v4-flash',
     timeoutMs: options.timeoutMs ?? Number(process.env.AI_TIMEOUT_MS ?? 30000),
+    thinking: options.thinking ?? true,
   };
 }
 
@@ -54,7 +56,7 @@ export function createAiGateway(options: Options = {}): AiGateway {
       model: config.model,
       response_format: { type: 'json_object' },
       messages,
-      thinking: { type: 'disabled' },
+      ...(config.thinking ? { thinking: { type: 'disabled' as const } } : {}),
     });
     return JSON.parse(response.choices[0]?.message.content ?? '{}') as unknown;
   };

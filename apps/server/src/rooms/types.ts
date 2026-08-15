@@ -35,6 +35,7 @@ export type Room = {
   debateMessages: DebateMessage[];
   messageSequence: number;
   roundVerdict: DebateRoundVerdict | null;
+  roundResultReady: Record<Seat, boolean>;
   roundRecords: DebateRoundRecord[];
   trackVerdict: TrackVerdict | null;
   judgment: PhilosophyJudgment | null;
@@ -46,13 +47,10 @@ export type Room = {
 
 export function migrateRoomSnapshot(snapshot: Room): Room {
   const room = structuredClone(snapshot) as Room & Record<string, unknown>;
-  const legacyConfig = room.config as GameConfig & { speechSeconds?: number; disconnectSeconds?: number; timingMode?: GameConfig['timingMode']; debateMinutes?: GameConfig['debateMinutes'] };
+  const legacyConfig = room.config as GameConfig & { speechSeconds?: number; disconnectSeconds?: number; debateMinutes?: GameConfig['debateMinutes'] };
   room.config = {
     games: legacyConfig.games,
-    timingMode: legacyConfig.timingMode ?? 'timed',
-    selectionSeconds: legacyConfig.selectionSeconds,
-    traitSeconds: legacyConfig.traitSeconds,
-    debateMinutes: legacyConfig.debateMinutes ?? 5,
+    debateMinutes: legacyConfig.debateMinutes ?? 3,
   };
   room.automaticCharacters ??= { a: null, b: null };
   room.roundAttacker ??= null;
@@ -60,6 +58,7 @@ export function migrateRoomSnapshot(snapshot: Room): Room {
   room.debateMessages ??= [];
   room.messageSequence ??= 0;
   room.roundVerdict ??= null;
+  room.roundResultReady ??= { a: false, b: false };
   room.roundRecords ??= [];
   room.trackVerdict ??= null;
   room.judgment ??= null;

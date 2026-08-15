@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
 import type { GameConfig, PublicCharacter, RoomView } from '@ydi/contracts';
 import { api } from './api';
+import { FreeTokenModal } from './FreeTokenModal';
 import { TrainStage } from './game/TrainStage';
 import { CharacterCard } from './game/CharacterCard';
 import { usePointerDrag, type DropTarget } from './game/use-pointer-drag';
@@ -10,27 +11,34 @@ import { CharacterDetailDrawer } from './game/CharacterDetailDrawer';
 import { RoomPresence } from './game/RoomPresence';
 import './styles.css';
 
-const defaultConfig: GameConfig = { games: 1, timingMode: 'timed', selectionSeconds: 180, traitSeconds: 180, debateMinutes: 5 };
-const phaseTitle: Record<string, string> = { waiting: '等待另一位被告', selecting: '选择两名人物', traits: '追加人物词条', 'target-selecting': '攻方选择目标', 'debate-chat': '实时攻防辩论', 'round-adjudicating': '列车长裁决中', 'round-result': '回合裁决', 'track-adjudicating': '最终压轨', 'judgment-generating': '审判生成中', judgment: '黑暗审判', 'between-games': '等待下一局', 'match-end': '审判结束' };
+const defaultConfig: GameConfig = { games: 1, debateMinutes: 3 };
+const phaseTitle: Record<string, string> = { waiting: '等待另一位被告', selecting: '选择两名人物', traits: '追加人物词条', 'target-selecting': '攻方选择目标', 'debate-chat': '实时攻防辩论', 'round-adjudicating': '列车长裁决中', 'round-result': '回合裁决', 'track-adjudicating': '最终压轨', 'conductor-speech': '列车长宣言', 'judgment-generating': '审判生成中', judgment: '黑暗审判', 'between-games': '等待下一局', 'match-end': '审判结束' };
 
 export function App() {
   const [nickname, setNickname] = useState(''); const [code, setCode] = useState(''); const [mode, setMode] = useState<'create' | 'join'>('create'); const [config, setConfig] = useState(defaultConfig); const [room, setRoom] = useState<RoomView | null>(null); const [error, setError] = useState(''); const [busy, setBusy] = useState(false);
   const [apiKey, setApiKey] = useState(''); const [testedApiKey, setTestedApiKey] = useState<string | null>(null); const [testingApiKey, setTestingApiKey] = useState(false);
+  const [authMode, setAuthMode] = useState<'own-key' | 'free-token'>(() => sessionStorage.getItem('ydi_auth_mode') === 'free-token' ? 'free-token' : 'own-key');
+  const [freeTokenReady, setFreeTokenReady] = useState(() => sessionStorage.getItem('ydi_free_token') === '1');
+  const [showFreeTokenModal, setShowFreeTokenModal] = useState(false);
   useEffect(() => { const saved = sessionStorage.getItem('ydi_room'); if (saved) api.room(saved).then(setRoom).catch(() => sessionStorage.removeItem('ydi_room')); }, []);
   useEffect(() => { if (!room) return; let socket: ReturnType<typeof io>; api.session().then(({ playerId }) => { socket = io({ withCredentials: true }); socket.emit('room:subscribe', { roomCode: room.roomCode, playerId }); socket.on('room:state', setRoom); }); const poll = window.setInterval(() => api.room(room.roomCode).then(setRoom).catch(() => {}), 4000); return () => { socket?.disconnect(); clearInterval(poll); }; }, [room?.roomCode]);
   const normalizedApiKey = apiKey.trim();
   const apiKeyReady = normalizedApiKey.length > 0 && testedApiKey === normalizedApiKey;
   const changeApiKey = (value: string) => { setApiKey(value); setTestedApiKey(null); setError(''); };
   const testDeepSeekKey = async () => { if (!normalizedApiKey || testingApiKey) return; setTestingApiKey(true); setTestedApiKey(null); setError(''); try { await api.testDeepSeekKey(normalizedApiKey); setTestedApiKey(normalizedApiKey); } catch (cause) { setError(cause instanceof Error ? cause.message : 'DeepSeek Key 连接失败'); } finally { setTestingApiKey(false); } };
-  const enter = async () => { if (mode === 'create' && !apiKeyReady) return; setBusy(true); setError(''); try { const result = mode === 'create' ? await api.create(nickname, config, normalizedApiKey) : await api.join(nickname, code.trim().toUpperCase()); sessionStorage.setItem('ydi_room', result.roomCode); setRoom(await api.room(result.roomCode)); } catch (cause) { setError(cause instanceof Error ? cause.message : '无法进入房间'); } finally { setBusy(false); } };
+  const switchAuthMode = (value: 'own-key' | 'free-token') => { setAuthMode(value); setError(''); sessionStorage.setItem('ydi_auth_mode', value); };
+  const grantFreeToken = () => { setFreeTokenReady(true); sessionStorage.setItem('ydi_free_token', '1'); };
+  const enter = async () => { if (mode === 'create' && (authMode === 'own-key' ? !apiKeyReady : !freeTokenReady)) return; setBusy(true); setError(''); try { const result = mode === 'create' ? await api.create(nickname, config, authMode === 'own-key' ? { apiKey: normalizedApiKey } : { freeToken: true }) : await api.join(nickname, code.trim().toUpperCase()); sessionStorage.setItem('ydi_room', result.roomCode); setRoom(await api.room(result.roomCode)); } catch (cause) { setError(cause instanceof Error ? cause.message : '无法进入房间'); } finally { setBusy(false); } };
   if (room) return <RoomScreen room={room} send={async (action, body) => { setError(''); try { await api.action(room.roomCode, action, body); setRoom(await api.room(room.roomCode)); } catch (cause) { setError(cause instanceof Error ? cause.message : '操作失败'); throw cause; } }} leave={() => { sessionStorage.removeItem('ydi_room'); setRoom(null); }} error={error} />;
-  return <HomeScreen nickname={nickname} setNickname={setNickname} code={code} setCode={setCode} mode={mode} setMode={setMode} config={config} setConfig={setConfig} apiKey={apiKey} setApiKey={changeApiKey} apiKeyReady={apiKeyReady} testingApiKey={testingApiKey} testDeepSeekKey={testDeepSeekKey} error={error} busy={busy} enter={enter}/>;
+  return <HomeScreen nickname={nickname} setNickname={setNickname} code={code} setCode={setCode} mode={mode} setMode={setMode} config={config} setConfig={setConfig} apiKey={apiKey} setApiKey={changeApiKey} apiKeyReady={apiKeyReady} testingApiKey={testingApiKey} testDeepSeekKey={testDeepSeekKey} authMode={authMode} switchAuthMode={switchAuthMode} freeTokenReady={freeTokenReady} showFreeTokenModal={showFreeTokenModal} setShowFreeTokenModal={setShowFreeTokenModal} grantFreeToken={grantFreeToken} error={error} busy={busy} enter={enter}/>;
 }
 
-function HomeScreen({ nickname, setNickname, code, setCode, mode, setMode, config, setConfig, apiKey, setApiKey, apiKeyReady, testingApiKey, testDeepSeekKey, error, busy, enter }: {
+function HomeScreen({ nickname, setNickname, code, setCode, mode, setMode, config, setConfig, apiKey, setApiKey, apiKeyReady, testingApiKey, testDeepSeekKey, authMode, switchAuthMode, freeTokenReady, showFreeTokenModal, setShowFreeTokenModal, grantFreeToken, error, busy, enter }: {
   nickname: string; setNickname(value: string): void; code: string; setCode(value: string): void;
   mode: 'create' | 'join'; setMode(value: 'create' | 'join'): void; config: GameConfig; setConfig(value: GameConfig): void;
   apiKey: string; setApiKey(value: string): void; apiKeyReady: boolean; testingApiKey: boolean; testDeepSeekKey(): Promise<void>;
+  authMode: 'own-key' | 'free-token'; switchAuthMode(value: 'own-key' | 'free-token'): void; freeTokenReady: boolean;
+  showFreeTokenModal: boolean; setShowFreeTokenModal(value: boolean): void; grantFreeToken(): void;
   error: string; busy: boolean; enter(): Promise<void>;
 }) {
   const storySteps = [
@@ -72,9 +80,21 @@ function HomeScreen({ nickname, setNickname, code, setCode, mode, setMode, confi
       <div className="entry-heading"><span>双人审判室</span><h2>坐上被告席</h2><p>邀请一位朋友。无需注册，房间码就是你们的车票。</p></div>
       <div className="mode-tabs"><button className={mode === 'create' ? 'active' : ''} onClick={() => setMode('create')}>创建审判室</button><button className={mode === 'join' ? 'active' : ''} onClick={() => setMode('join')}>加入审判室</button></div>
       <label>你的称呼<input value={nickname} onChange={(event) => setNickname(event.target.value)} maxLength={20} placeholder="例如：不愿透露姓名的甲方" /></label>
-      {mode === 'join' ? <label>六位房间码<input className="code-input" value={code} onChange={(event) => setCode(event.target.value)} maxLength={6} placeholder="ABC234" /></label> : <><RuleForm value={config} onChange={setConfig}/><div className="api-key-check"><label>DeepSeek Key<input type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} maxLength={512} autoComplete="off" placeholder="sk-..." /></label><button type="button" disabled={testingApiKey || apiKey.trim().length === 0} onClick={() => void testDeepSeekKey()}>{testingApiKey ? '正在测试…' : '测试连接'}</button>{apiKeyReady && <p role="status">连接成功，可以创建房间</p>}<small>Key 仅保存在本房间的服务端内存中，整场结束后删除。</small></div></>} 
+      {mode === 'join' ? <label>六位房间码<input className="code-input" value={code} onChange={(event) => setCode(event.target.value)} maxLength={6} placeholder="ABC234" /></label> : <>
+        <RuleForm value={config} onChange={setConfig}/>
+        <div className="auth-mode-tabs" role="group" aria-label="AI 凭证方式">
+          <button type="button" className={authMode === 'own-key' ? 'active' : ''} onClick={() => switchAuthMode('own-key')}>使用自己的 Key</button>
+          <button type="button" className={authMode === 'free-token' ? 'active' : ''} onClick={() => switchAuthMode('free-token')}>免费 Token</button>
+        </div>
+        {authMode === 'own-key'
+          ? <div className="api-key-check"><label>DeepSeek Key<input type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} maxLength={512} autoComplete="off" placeholder="sk-..." /></label><button type="button" disabled={testingApiKey || apiKey.trim().length === 0} onClick={() => void testDeepSeekKey()}>{testingApiKey ? '正在测试…' : '测试连接'}</button>{apiKeyReady && <p role="status">连接成功，可以创建房间</p>}<small>Key 仅保存在本房间的服务端内存中，整场结束后删除。</small></div>
+          : <div className="free-token-entry">{freeTokenReady
+              ? <><p role="status">免费 Token 已验证，可以直接创建房间。</p><button type="button" className="free-token-link" onClick={() => setShowFreeTokenModal(true)}>重新获取验证码</button></>
+              : <><p>不想提供自己的 Key？扫码关注公众号，获取验证码即可免费使用 Token。</p><button type="button" className="free-token-link" onClick={() => setShowFreeTokenModal(true)}>获取验证码，免费使用 Token</button></>}
+            <small>免费 Token 由服务端调用共享中转 API，房间结束后即释放。</small></div>}
+      </>}
       {error && <p role="alert" className="error">{error}</p>}
-      <button className="primary entry-submit" disabled={busy || nickname.trim().length < 2 || (mode === 'join' ? code.length !== 6 : !apiKeyReady)} onClick={() => void enter()}>{busy ? '正在打开审判室…' : mode === 'create' ? '创建审判室' : '加入这场审判'}</button>
+      <button className="primary entry-submit" disabled={busy || nickname.trim().length < 2 || (mode === 'join' ? code.length !== 6 : (authMode === 'own-key' ? !apiKeyReady : !freeTokenReady))} onClick={() => void enter()}>{busy ? '正在打开审判室…' : mode === 'create' ? '创建审判室' : '加入这场审判'}</button>
       <p className="fineprint">开局后刷新、关闭页面或断开连接会立即判负，原局无法恢复。</p>
     </section>
 
@@ -83,17 +103,15 @@ function HomeScreen({ nickname, setNickname, code, setCode, mode, setMode, confi
       <ol>{storySteps.map((step, index) => <li key={step.title}><span>{String(index + 1).padStart(2, '0')}</span><div><h3>{step.title}</h3><p>{step.text}</p></div></li>)}</ol>
     </article>
 
+    {showFreeTokenModal && <FreeTokenModal onClose={() => setShowFreeTokenModal(false)} onVerified={grantFreeToken} />}
+
   </main>;
 }
 
 function RuleForm({ value, onChange }: { value: GameConfig; onChange(value: GameConfig): void }) {
-  const field = (key: 'selectionSeconds' | 'traitSeconds', label: string) => <label>{label}<input type="number" min={20} max={540} disabled={value.timingMode === 'unlimited'} value={value[key]} onChange={(event) => { const entered = Math.trunc(Number(event.target.value)); onChange({ ...value, [key]: Math.min(540, Math.max(20, Number.isFinite(entered) ? entered : 20)) }); }}/></label>;
   return <div className="rules">
     <h2>本场规则</h2>
     <label>比赛局数<select value={value.games} onChange={(event) => onChange({ ...value, games: Number(event.target.value) as GameConfig['games'] })}><option value={1}>1</option><option value={3}>3</option><option value={5}>5</option></select></label>
-    <fieldset className="timing-mode"><legend>选人和词条计时</legend><label><input type="radio" name="timing-mode" checked={value.timingMode === 'timed'} onChange={() => onChange({ ...value, timingMode: 'timed' })} />限时</label><label><input type="radio" name="timing-mode" checked={value.timingMode === 'unlimited'} onChange={() => onChange({ ...value, timingMode: 'unlimited' })} />不限时</label></fieldset>
-    {field('selectionSeconds', '选牌秒数')}
-    {field('traitSeconds', '词条秒数')}
     <label>攻防聊天室分钟<select value={value.debateMinutes} onChange={(event) => onChange({ ...value, debateMinutes: Number(event.target.value) as GameConfig['debateMinutes'] })}>{[3, 4, 5, 6, 7, 8, 9, 10].map((minutes) => <option value={minutes} key={minutes}>{minutes}</option>)}</select></label>
   </div>;
 }

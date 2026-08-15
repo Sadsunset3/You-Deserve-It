@@ -2,9 +2,6 @@ import { z } from 'zod';
 
 export const gameConfigSchema = z.object({
   games: z.union([z.literal(1), z.literal(3), z.literal(5)]),
-  timingMode: z.enum(['timed', 'unlimited']),
-  selectionSeconds: z.number().int().min(20).max(540),
-  traitSeconds: z.number().int().min(20).max(540),
   debateMinutes: z.union([
     z.literal(3), z.literal(4), z.literal(5), z.literal(6),
     z.literal(7), z.literal(8), z.literal(9), z.literal(10),
@@ -15,7 +12,12 @@ export const nicknameSchema = z.string().trim().min(2).max(20);
 export const roomCodeSchema = z.string().regex(/^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{6}$/);
 export const apiKeySchema = z.string().trim().min(1).max(512);
 
-export const createRoomSchema = z.object({ nickname: nicknameSchema, config: gameConfigSchema, apiKey: apiKeySchema });
+export const createRoomSchema = z.object({
+  nickname: nicknameSchema,
+  config: gameConfigSchema,
+  apiKey: apiKeySchema.optional(),
+  freeToken: z.literal(true).optional(),
+}).strict().refine((value) => Boolean(value.apiKey) !== Boolean(value.freeToken), { message: '必须且只能提供 apiKey 或 freeToken 其中之一' });
 export const joinRoomSchema = z.object({ nickname: nicknameSchema, roomCode: roomCodeSchema });
 export const commandSchema = z.object({ commandId: z.string().uuid(), expectedVersion: z.number().int().positive() });
 export const selectCharactersSchema = commandSchema.extend({ characterIds: z.array(z.string()).length(2) });
@@ -35,6 +37,7 @@ export const phaseSchema = z.enum([
   'round-adjudicating',
   'round-result',
   'track-adjudicating',
+  'conductor-speech',
   'judgment-generating',
   'judgment',
   'between-games',
@@ -53,6 +56,7 @@ export const trackVerdictSchema = z.object({
   crushedSeat: z.enum(['a', 'b']),
   survivor: z.enum(['a', 'b']),
   reason: z.string().trim().min(1).max(1200),
+  speech: z.string().trim().min(1).max(1200),
   decisiveFactors: z.array(z.string().trim().min(1).max(300)).min(1).max(6),
   fallback: z.boolean(),
 }).refine((value) => value.crushedSeat !== value.survivor, {
@@ -78,7 +82,6 @@ export const philosophyJudgmentSchema = z.object({
 }).strict();
 
 export type GameConfig = z.infer<typeof gameConfigSchema>;
-export type TimingMode = GameConfig['timingMode'];
 export type Alignment = 'good' | 'evil';
 export type Seat = 'a' | 'b';
 export type Phase = z.infer<typeof phaseSchema>;
@@ -124,6 +127,7 @@ export type RoundDecisionInput = {
 export type TrackDecisionInput = {
   seed: string;
   conductor: Conductor;
+  players: Record<Seat, { nickname: string }>;
   tracks: Record<Seat, DecisionCharacter[]>;
   rounds: DebateRoundRecord[];
 };
@@ -155,6 +159,7 @@ export type RoomView = {
   debateMessages: DebateMessage[];
   messageSequence: number;
   roundVerdict: DebateRoundVerdict | null;
+  roundResultReady: { mine: boolean; opponent: boolean };
   roundRecords: DebateRoundRecord[];
   trackVerdict: TrackVerdict | null;
   judgment: PhilosophyJudgment | null;

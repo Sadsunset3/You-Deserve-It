@@ -10,7 +10,8 @@
     "test": "vitest run --config ../../vitest.config.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint src",
-    "verify:deepseek": "node --env-file=../../.env dist/ai/verify.js"
+    "verify:deepseek": "node --env-file=../../.env dist/ai/verify.js",
+    "wechat:menu": "node --env-file=../../.env dist/wechat/menu.js"
   },
   "dependencies": {
     "@fastify/cookie": "latest",

@@ -59,10 +59,13 @@ export function fallbackTrackVerdict(input: TrackDecisionInput): TrackVerdict {
   const b = score('b');
   const survivor = a === b ? (stableTie(input.seed) ? 'a' : 'b') : a > b ? 'a' : 'b';
   const crushedSeat = survivor === 'a' ? 'b' : 'a';
+  const crushedName = input.players[crushedSeat].nickname;
+  const survivorName = input.players[survivor].nickname;
   return {
     crushedSeat,
     survivor,
     reason: 'AI 暂时离席，列车按人物背景、词条、胜出论据与本局人格完成了降级压轨。',
+    speech: `行了，我把两条轨道的人都看了一遍。按“${input.conductor.rule}”这把尺子，${survivorName}这边更值得留；${crushedName}那边，只能说这列火车替你们选了。别问我对不对，我只负责拉杆。`,
     decisiveFactors: [`${survivor.toUpperCase()} 轨人物与论据的综合权重更高`, `列车长规则：${input.conductor.rule}`],
     fallback: true,
   };
@@ -70,29 +73,29 @@ export function fallbackTrackVerdict(input: TrackDecisionInput): TrackVerdict {
 
 export function fallbackJudgment(input: JudgmentInput): PhilosophyJudgment {
   const line = (text: string) => text.slice(0, 180);
-  const trackNames = (seat: Seat) => input.tracks[seat].map((character) => character.name).join('、') || '无人留下姓名';
-  const trackBackgrounds = (seat: Seat) => input.tracks[seat].map((character) => `${character.name}：${character.background}`).join('；') || '没有人物背景';
-  const playerLines = (seat: Seat): [string, string] => {
-    const roundArguments = input.rounds.map((round) => {
-      const speech = round.messages.find((message) => message.sender === seat && message.text.trim())?.text.trim();
-      return `第${round.round}轮“${(speech ?? '没有实质发言').slice(0, 36)}”`;
+  const name = (seat: Seat) => input.players[seat].nickname;
+  const allCharacters = [...input.tracks.a, ...input.tracks.b];
+  const targetName = (id: string) => allCharacters.find((character) => character.id === id)?.name ?? '';
+  const playerLines = (side: Seat): [string, string] => {
+    const rounds = input.rounds.map((round) => {
+      const words = round.messages.filter((message) => message.sender === side && message.text.trim()).map((message) => message.text.trim().slice(0, 30)).join('；');
+      const target = round.targetId ? targetName(round.targetId) : '';
+      return `第${round.round}轮针对${target || '目标'}：“${words || '没有留下实质发言'}”`;
     });
-    const roundResults = input.rounds.map((round) => round.verdict.winnerSeat === seat
-      ? `第${round.round}轮胜在“${round.verdict.winningSummary.slice(0, 34)}”`
-      : `第${round.round}轮未能说服列车长`);
     return [
-      line(roundArguments.length > 0 ? `${input.players[seat].nickname}守着${seat.toUpperCase()}轨：${roundArguments.join('；')}，` : `${input.players[seat].nickname}守着${seat.toUpperCase()}轨，却没有留下完整辩词，`),
-      line(roundResults.length > 0 ? `${roundResults.join('；')}。` : '没有一轮裁决可供这条轨道申辩。'),
+      line(`${name(side)}：${rounds.join('；')}。`),
+      line('为了活下来，他把道德标准调到了最顺手的档位。'),
     ];
   };
+  const debatedNames = [...new Set(input.rounds.map((round) => (round.targetId ? targetName(round.targetId) : '')).filter(Boolean))].join('、');
   return {
     title: '列车离席之后',
     stanzas: [
-      { kind: 'opening', lines: ['三轮话音落进枕木之间，', '这一夜终于只剩一条轨道可以天亮。'] },
+      { kind: 'opening', lines: [line(`列车压过了${name(input.verdict.crushedSeat)}所在的轨道。`), line(`${name(input.verdict.survivor)}活了下来，但说不上为什么。`)] },
       { kind: 'player-a', lines: playerLines('a') },
       { kind: 'player-b', lines: playerLines('b') },
-      { kind: 'tracks', lines: [line(`A轨留下${trackNames('a')}：${trackBackgrounds('a')}，`), line(`B轨留下${trackNames('b')}：${trackBackgrounds('b')}。`)] },
-      { kind: 'verdict', lines: [line(`${input.conductor.name}依照“${input.conductor.rule}”拉下拉杆，`), line(`${input.verdict.survivor.toUpperCase()}轨幸存，${input.verdict.crushedSeat.toUpperCase()}轨被压过：${input.verdict.reason}`)] },
+      { kind: 'tracks', lines: [line(`被推上辩论席的目标：${debatedNames || '无人'}。`), line('没人替剩下的人物开口，不是他们无罪，是辩护无利可图。')] },
+      { kind: 'verdict', lines: [line(`${input.conductor.name}依照“${input.conductor.rule}”落槌。`), line('他活了下来，原则没有。')] },
     ],
     fallback: true,
   };

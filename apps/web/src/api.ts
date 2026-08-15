@@ -4,7 +4,8 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> { cons
 export const api = {
   session: () => request<{ playerId: string }>('/api/session'),
   testDeepSeekKey: (apiKey: string) => request<{ ok: true }>('/api/ai/test-key', { method: 'POST', body: JSON.stringify({ apiKey }) }),
-  create: (nickname: string, config: GameConfig, apiKey: string) => request<{ roomCode: string }>('/api/rooms', { method: 'POST', body: JSON.stringify({ nickname, config, apiKey }) }),
+  freeToken: (code: string) => request<{ ok: true }>('/api/ai/free-token', { method: 'POST', body: JSON.stringify({ code }) }),
+  create: (nickname: string, config: GameConfig, credential: { apiKey?: string; freeToken?: boolean }) => request<{ roomCode: string }>('/api/rooms', { method: 'POST', body: JSON.stringify({ nickname, config, ...credential }) }),
   join: (nickname: string, roomCode: string) => request<{ roomCode: string }>('/api/rooms/join', { method: 'POST', body: JSON.stringify({ nickname, roomCode }) }),
   room: (code: string) => request<RoomView>(`/api/rooms/${code}`),
   action: (code: string, action: string, body: object = {}) => request<{ ok: true }>(`/api/rooms/${code}/${action}`, { method: 'POST', body: JSON.stringify(body) }),

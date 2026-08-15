@@ -5,9 +5,9 @@ import { GameStore } from '../persistence/store';
 import { RoomManager } from './manager';
 import { migrateRoomSnapshot } from './types';
 
-const config = { games: 1, timingMode: 'timed', selectionSeconds: 180, traitSeconds: 180, debateMinutes: 5 } satisfies GameConfig;
+const config = { games: 1, debateMinutes: 5 } satisfies GameConfig;
 const roundVerdict: DebateRoundVerdict = { winnerSeat: 'b', conductorMessage: '这轮乙方更站得住，我判乙方赢。', debateSummary: '甲方攻击人物过去，乙方强调人物仍有价值。', winningSummary: '他仍有不可替代的价值。', fallback: false };
-const trackVerdict: TrackVerdict = { crushedSeat: 'b', survivor: 'a', reason: '甲轨整体更值得保留', decisiveFactors: ['三轮论据'], fallback: false };
+const trackVerdict: TrackVerdict = { crushedSeat: 'b', survivor: 'a', reason: '甲轨整体更值得保留', speech: '我看了两条轨，甲这边的人物更站得住，乙那边只能被压过去。', decisiveFactors: ['三轮论据'], fallback: false };
 const judgment: PhilosophyJudgment = { title: '最后的道岔', stanzas: [
   { kind: 'opening', lines: ['列车切开夜色，', '名字等待称量。'] },
   { kind: 'player-a', lines: ['甲方高举功绩，', '也藏起恐惧。'] },
@@ -28,20 +28,10 @@ async function startRoom(rooms: RoomManager, games: 1 | 3 | 5 = 1, overrides: Pa
 describe('room timing and snapshot migration', () => {
   afterEach(() => vi.useRealTimers());
 
-  it('uses 180 seconds for the default timed selecting phase', async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date('2026-08-15T00:00:00.000Z'));
+  it('leaves selecting and trait placement without deadlines', async () => {
     const store = new GameStore(':memory:');
     const rooms = new RoomManager(store, () => 0);
     const code = await startRoom(rooms);
-    expect(rooms.get(code).deadline).toBe('2026-08-15T00:03:00.000Z');
-    store.close();
-  });
-
-  it('leaves selecting and trait placement without deadlines in unlimited mode', async () => {
-    const store = new GameStore(':memory:');
-    const rooms = new RoomManager(store, () => 0);
-    const code = await startRoom(rooms, 1, { timingMode: 'unlimited' });
     expect(rooms.get(code).deadline).toBeNull();
 
     let room = rooms.get(code);
@@ -52,12 +42,12 @@ describe('room timing and snapshot migration', () => {
     store.close();
   });
 
-  it('adds current timing defaults to an old waiting-room snapshot', () => {
+  it('adds current config defaults to an old waiting-room snapshot', () => {
     const migrated = migrateRoomSnapshot({
       phase: 'waiting', deadline: null,
       config: { games: 1, selectionSeconds: 60, traitSeconds: 60, speechSeconds: 90, disconnectSeconds: 120 },
     } as never);
-    expect(migrated.config).toEqual({ games: 1, timingMode: 'timed', selectionSeconds: 60, traitSeconds: 60, debateMinutes: 5 });
+    expect(migrated.config).toEqual({ games: 1, debateMinutes: 3 });
   });
 
   it('ends an active legacy attack room and requires a new game', () => {
@@ -131,7 +121,7 @@ describe('authoritative three-round RoomManager', () => {
     const [event] = await rooms.tick(new Date('2026-08-15T00:05:00.000Z'));
     expect(event).toMatchObject({ type: 'round-adjudication', roomCode: code });
     await expect(rooms.appendDebateMessage(code, 'p1', 'late', '来迟了', new Date('2026-08-15T00:05:00.000Z'))).rejects.toThrow('chat unavailable');
-    await rooms.resolveRound(code, event!.version, roundVerdict, new Date('2026-08-15T00:05:01.000Z'));
+    await rooms.resolveRound(code, event!.version, roundVerdict);
 
     room = rooms.get(code);
     expect(room.roundRecords[0]).toMatchObject({ messages: [{ text: '他不值得活' }, { text: '他救过更多人' }], verdict: roundVerdict });
@@ -159,18 +149,77 @@ describe('authoritative three-round RoomManager', () => {
       await rooms.appendDebateMessage(code, 'p1', `a-${round}`, `甲方消息${round}`, new Date(startedAt.getTime() + 1000));
       await rooms.appendDebateMessage(code, 'p2', `b-${round}`, `乙方消息${round}`, new Date(startedAt.getTime() + 1000));
       const [event] = await rooms.tick(new Date(startedAt.getTime() + 300_000));
-      await rooms.resolveRound(code, event!.version, roundVerdict, new Date(startedAt.getTime() + 301_000));
-      const events = await rooms.tick(new Date(startedAt.getTime() + 306_000));
+      await rooms.resolveRound(code, event!.version, roundVerdict);
+      const firstAdvance = await rooms.confirmRoundResult(code, 'p1', rooms.get(code).version);
+      const secondAdvance = await rooms.confirmRoundResult(code, 'p2', rooms.get(code).version);
       room = rooms.get(code);
       expect(room.selections).toEqual(fixedSelections);
       expect(room.automaticCharacters).toEqual(fixedAutomaticCharacters);
-      if (round < 3) expect(room.phase).toBe('target-selecting');
-      else expect(events[0]).toMatchObject({ type: 'track-adjudication', roomCode: code });
+      if (round < 3) {
+        expect(firstAdvance).toBeNull();
+        expect(secondAdvance).toBeNull();
+        expect(room.phase).toBe('target-selecting');
+      } else {
+        expect(firstAdvance).toBeNull();
+        expect(secondAdvance).toMatchObject({ type: 'track-adjudication', roomCode: code });
+        expect(room.phase).toBe('track-adjudicating');
+      }
     }
 
     expect(attackers).toEqual(['a', 'b', 'a']);
     expect(rooms.get(code)).toMatchObject({ phase: 'track-adjudicating', roundRecords: { length: 3 } });
     expect(rooms.get(code).roundRecords.flatMap((record) => record.messages)).toHaveLength(6);
+    store.close();
+  });
+
+  it('holds the round-result phase until both players confirm and only then advances', async () => {
+    const store = new GameStore(':memory:');
+    const rooms = new RoomManager(store, () => 0);
+    const code = await startRoom(rooms);
+    await prepareDebate(rooms, code);
+    let room = rooms.get(code);
+    const targetId = room.automaticCharacters.b!;
+    const startedAt = new Date('2026-08-15T00:10:00.000Z');
+    await rooms.lockDebateTarget(code, 'p1', room.version, targetId, startedAt);
+    await rooms.appendDebateMessage(code, 'p1', 'm1', '他不值得被保留', new Date(startedAt.getTime() + 1000));
+    await rooms.appendDebateMessage(code, 'p2', 'm2', '他救过更多人', new Date(startedAt.getTime() + 1000));
+    const [event] = await rooms.tick(new Date(startedAt.getTime() + 300_000));
+    await rooms.resolveRound(code, event!.version, roundVerdict);
+    room = rooms.get(code);
+    expect(room).toMatchObject({ phase: 'round-result', roundResultReady: { a: false, b: false } });
+
+    await rooms.confirmRoundResult(code, 'p1', room.version);
+    room = rooms.get(code);
+    expect(room).toMatchObject({ phase: 'round-result', roundResultReady: { a: true, b: false } });
+
+    await rooms.confirmRoundResult(code, 'p2', room.version);
+    room = rooms.get(code);
+    expect(room.phase).toBe('target-selecting');
+    expect(room.roundAttacker).toBe('b');
+    expect(room.roundResultReady).toEqual({ a: false, b: false });
+    store.close();
+  });
+
+  it('never auto-advances from round-result until both players confirm', async () => {
+    const store = new GameStore(':memory:');
+    const rooms = new RoomManager(store, () => 0);
+    const code = await startRoom(rooms);
+    await prepareDebate(rooms, code);
+    const room = rooms.get(code);
+    const targetId = room.automaticCharacters.b!;
+    const startedAt = new Date('2026-08-15T00:10:00.000Z');
+    await rooms.lockDebateTarget(code, 'p1', room.version, targetId, startedAt);
+    await rooms.appendDebateMessage(code, 'p1', 'm1', '他不值得被保留', new Date(startedAt.getTime() + 1000));
+    await rooms.appendDebateMessage(code, 'p2', 'm2', '他救过更多人', new Date(startedAt.getTime() + 1000));
+    const [event] = await rooms.tick(new Date(startedAt.getTime() + 300_000));
+    await rooms.resolveRound(code, event!.version, roundVerdict);
+    await rooms.confirmRoundResult(code, 'p1', rooms.get(code).version);
+    expect(rooms.get(code).phase).toBe('round-result');
+    await rooms.tick(new Date(startedAt.getTime() + 301_000 + 45_000));
+    expect(rooms.get(code).phase).toBe('round-result');
+    await rooms.confirmRoundResult(code, 'p2', rooms.get(code).version);
+    expect(rooms.get(code).phase).toBe('target-selecting');
+    expect(rooms.get(code).roundAttacker).toBe('b');
     store.close();
   });
 
@@ -199,9 +248,13 @@ describe('authoritative three-round RoomManager', () => {
     await rooms.addTrait(code, 'p1', room.version, usedTraitId, room.automaticCharacters.a!);
     room = rooms.get(code);
     room.phase = 'track-adjudicating';
-    await rooms.resolveTrack(code, room.version, trackVerdict);
+    const trackedAt = new Date('2026-08-15T00:40:00.000Z');
+    await rooms.resolveTrack(code, room.version, trackVerdict, trackedAt);
     room = rooms.get(code);
     await rooms.saveJudgment(code, room.version, judgment);
+    room = rooms.get(code);
+    expect(room.phase).toBe('conductor-speech');
+    await rooms.tick(new Date(trackedAt.getTime() + 9_000));
     room = rooms.get(code);
     await rooms.readyNextGame(code, 'p1', room.version);
     room = rooms.get(code);
@@ -269,14 +322,20 @@ describe('authoritative three-round RoomManager', () => {
     const code = await startRoom(rooms, 3);
     const room = rooms.get(code);
     room.phase = 'track-adjudicating';
+    const trackedAt = new Date('2026-08-15T00:50:00.000Z');
 
-    await rooms.resolveTrack(code, room.version, trackVerdict);
+    await rooms.resolveTrack(code, room.version, trackVerdict, trackedAt);
     let current = rooms.get(code);
-    expect(current).toMatchObject({ phase: 'judgment-generating', scores: { a: 1, b: 0 } });
+    expect(current).toMatchObject({ phase: 'conductor-speech', scores: { a: 1, b: 0 } });
+    expect(current.deadline).toBe(new Date(trackedAt.getTime() + 8_000).toISOString());
     await rooms.saveJudgment(code, current.version, judgment);
     current = rooms.get(code);
+    expect(current.phase).toBe('conductor-speech');
     expect(rooms.view(code, 'p1').judgment).toEqual(judgment);
     expect(current.finalResult?.philosophy).toBe(judgment.stanzas.flatMap((stanza) => stanza.lines).join('\n'));
+    await rooms.tick(new Date(trackedAt.getTime() + 9_000));
+    current = rooms.get(code);
+    expect(current.phase).toBe('judgment');
     await rooms.readyNextGame(code, 'p1', current.version);
     current = rooms.get(code);
     expect(current.phase).toBe('judgment');

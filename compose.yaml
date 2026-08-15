@@ -9,6 +9,12 @@ services:
       DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
       DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-v4-flash}
       WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:3000}
+      WECHAT_TOKEN: ${WECHAT_TOKEN:-}
+      WECHAT_APP_ID: ${WECHAT_APP_ID:-}
+      WECHAT_APP_SECRET: ${WECHAT_APP_SECRET:-}
+      WECHAT_ENCODING_AES_KEY: ${WECHAT_ENCODING_AES_KEY:-}
+      WECHAT_TEMPLATE_ID: ${WECHAT_TEMPLATE_ID:-}
+      WECHAT_MENU_KEY: ${WECHAT_MENU_KEY:-LOGIN}
     volumes:
       - game-data:/app/data
 volumes:

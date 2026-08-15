@@ -8,7 +8,7 @@ import { RoomPresence } from './RoomPresence';
 import { SelectionTray } from './SelectionTray';
 import { TrainStage } from './TrainStage';
 
-const phaseTitles: Record<RoomView['phase'], string> = { waiting: '等待另一位被告', selecting: '选择两名人物', traits: '追加人物词条', 'target-selecting': '攻方选择目标', 'debate-chat': '实时攻防辩论', 'round-adjudicating': '列车长裁决中', 'round-result': '回合裁决', 'track-adjudicating': '最终压轨', 'judgment-generating': '审判生成中', judgment: '黑暗审判', 'between-games': '等待下一局', 'match-end': '整场结束' };
+const phaseTitles: Record<RoomView['phase'], string> = { waiting: '等待另一位被告', selecting: '选择两名人物', traits: '追加人物词条', 'target-selecting': '攻方选择目标', 'debate-chat': '实时攻防辩论', 'round-adjudicating': '列车长裁决中', 'round-result': '回合裁决', 'track-adjudicating': '最终压轨', 'conductor-speech': '列车长宣言', 'judgment-generating': '审判生成中', judgment: '黑暗审判', 'between-games': '等待下一局', 'match-end': '整场结束' };
 const command = (room: RoomView) => ({ commandId: crypto.randomUUID(), expectedVersion: room.version });
 
 function Rails({ room, onCharacterOpen }: { room: RoomView; onCharacterOpen(character: PublicCharacter, trigger: HTMLButtonElement): void }) {
@@ -37,6 +37,6 @@ export function GameStage({ room, send, leave, error = '' }: { room: RoomView; s
   const surrender = async () => { if (surrendering || !window.confirm('确认投降并退出吗？对方将直接获胜。')) return; setSurrendering(true); try { await send('surrender', command(room)); leave?.(); } finally { setSurrendering(false); } };
   const debating = ['target-selecting', 'debate-chat', 'round-adjudicating', 'round-result'].includes(room.phase);
   if (debating) return <DebateChatPage room={room} send={send} />;
-  const judging = ['track-adjudicating', 'judgment-generating', 'judgment', 'between-games', 'match-end'].includes(room.phase);
+  const judging = ['track-adjudicating', 'conductor-speech', 'judgment-generating', 'judgment', 'between-games', 'match-end'].includes(room.phase);
   return <main className={`game-shell phase-${room.phase}`}><TrainStage room={room}><header className="game-hud"><div><span>审判室</span><strong>{room.roomCode}</strong></div><h1>{phaseTitles[room.phase]}</h1><div className="hud-score"><span>第 {room.game}/{room.config.games} 局</span><span>第 {room.round}/3 次攻防</span><strong>比分 {room.scores.a}:{room.scores.b}</strong></div>{room.opponentRemaining && <div className="opponent-resources" aria-label="对手剩余手牌"><span>好人 {room.opponentRemaining.good}</span><span>恶人 {room.opponentRemaining.evil}</span><span>词条 {room.opponentRemaining.traits}</span></div>}<RoomPresence room={room} /><button className="surrender-button" disabled={surrendering} onClick={() => void surrender()}>{surrendering ? '正在投降…' : '投降并退出'}</button></header>{error && <p role="alert" className="error banner">{error}</p>}{room.phase === 'selecting' ? <SelectionTray room={room} send={send} /> : <><Rails room={room} onCharacterOpen={openCharacter} />{room.phase === 'traits' && <TraitControls room={room} send={send} />}</>}{judging && <JudgmentOverlay room={room} send={send} leave={leave} />}</TrainStage><CharacterDetailDrawer character={detailCharacter} onClose={closeCharacter} /></main>;
 }

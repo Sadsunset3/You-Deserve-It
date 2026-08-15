@@ -1,14 +1,33 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildApp } from './app';
+import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { AiGateway } from './ai/client';
 import { RoomAiKeyStore } from './ai/room-key-store';
+import { VerificationCodeStore } from './ai/verification-code-store';
+import { decryptWechatMessage, encryptWechatMessage, wechatMsgSignature, xmlField } from './wechat/wechat';
 
-const config = { games: 1, timingMode: 'timed', selectionSeconds: 180, traitSeconds: 180, debateMinutes: 5 } as const;
+const AES_KEY = '1o1U9cHtJs0s838MKDgqN8vQcbN6CIce4ThdGWOfaWn';
+const AES_APP_ID = 'wx-test-app';
+
+const config = { games: 1, debateMinutes: 5 } as const;
 const command = (index: number, expectedVersion: number) => ({ commandId: `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`, expectedVersion });
 const cookie = (response: { cookies: Array<{ name: string; value: string }> }) => response.cookies.map((item) => `${item.name}=${item.value}`).join('; ');
+const wechatSignature = (token: string, timestamp: string, nonce: string) => createHash('sha1').update([token, timestamp, nonce].sort().join('')).digest('hex');
+const wechatXml = (content: string) => `<xml><ToUserName><![CDATA[gh_x]]></ToUserName><FromUserName><![CDATA[openid-1]]></FromUserName><CreateTime>1700000000</CreateTime><MsgType><![CDATA[text]]></MsgType><Content><![CDATA[${content}]]></Content></xml>`;
+const stubGateway = (): AiGateway => ({
+  decideRound: async () => ({ winnerSeat: 'b', conductorMessage: '这轮乙方说得更实在，我判乙方赢。', debateSummary: '甲方质疑价值，乙方强调救人事实。', winningSummary: '他保护过无辜者。', fallback: false }),
+  decideTrack: async () => ({ crushedSeat: 'b', survivor: 'a', reason: '甲轨胜出', speech: '我看了两条轨，甲这边的人更站得住，乙那边只能被压过去。', decisiveFactors: ['事实'], fallback: false }),
+  judgeMatch: async () => ({ title: '审判', stanzas: [
+    { kind: 'opening', lines: ['列车进入黑夜，', '两条轨道等待裁决。'] },
+    { kind: 'player-a', lines: ['甲方留下辩词，', '为自己的轨道呼吸。'] },
+    { kind: 'player-b', lines: ['乙方留下辩词，', '也为自己的轨道呼吸。'] },
+    { kind: 'tracks', lines: ['人物留在甲轨，', '人物也留在乙轨。'] },
+    { kind: 'verdict', lines: ['列车长拉下拉杆，', '一条轨道迎来车轮。'] },
+  ], fallback: false }),
+});
 
 describe('HTTP app', () => {
   const apps: Array<Awaited<ReturnType<typeof buildApp>>> = [];
@@ -24,7 +43,7 @@ describe('HTTP app', () => {
     const app = await buildApp({ databasePath: ':memory:', sessionSecret: '12345678901234567890123456789012', aiKeys }); apps.push(app);
     const response = await app.inject({ method: 'POST', url: '/api/rooms', payload: { nickname: '甲方', config, apiKey: 'room-secret' } });
     expect(response.statusCode).toBe(201); expect(response.cookies.some((cookie) => cookie.name === 'ydi_session')).toBe(true); expect(response.json().roomCode).toMatch(/^[A-Z2-9]{6}$/);
-    expect(aiKeys.get(response.json().roomCode)).toBe('room-secret');
+    expect(aiKeys.get(response.json().roomCode)).toEqual({ provider: 'user', apiKey: 'room-secret' });
     expect(JSON.stringify(app.rooms.get(response.json().roomCode))).not.toContain('room-secret');
   });
 
@@ -77,7 +96,7 @@ describe('HTTP app', () => {
     let roundCalls = 0;
     const aiGateway: AiGateway = {
       decideRound: async () => { roundCalls++; return { winnerSeat: 'b', conductorMessage: '这轮乙方说得更实在，我判乙方赢。', debateSummary: '甲方质疑价值，乙方强调救人事实。', winningSummary: '他保护过无辜者。', fallback: false }; },
-      decideTrack: async () => ({ crushedSeat: 'b', survivor: 'a', reason: '甲轨胜出', decisiveFactors: ['事实'], fallback: false }),
+      decideTrack: async () => ({ crushedSeat: 'b', survivor: 'a', reason: '甲轨胜出', speech: '我看了两条轨，甲这边的人更站得住，乙那边只能被压过去。', decisiveFactors: ['事实'], fallback: false }),
       judgeMatch: async () => ({ title: '审判', stanzas: [
         { kind: 'opening', lines: ['列车进入黑夜，', '两条轨道等待裁决。'] },
         { kind: 'player-a', lines: ['甲方留下辩词，', '为自己的轨道呼吸。'] },
@@ -170,5 +189,174 @@ describe('HTTP app', () => {
 
     expect(app.rooms.get(code).phase).toBe('match-end');
     expect(aiKeys.has(code)).toBe(false);
+  });
+
+  it('answers the WeChat server verification with the echostr', async () => {
+    const wechatToken = 'test-wechat-token';
+    const app = await buildApp({ databasePath: ':memory:', sessionSecret: '12345678901234567890123456789012', wechatToken }); apps.push(app);
+    const timestamp = '1700000000';
+    const nonce = 'nonce-1';
+    const signature = wechatSignature(wechatToken, timestamp, nonce);
+
+    const response = await app.inject({ method: 'GET', url: `/api/wechat/event?signature=${signature}&timestamp=${timestamp}&nonce=${nonce}&echostr=hello` });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toBe('hello');
+  });
+
+  it('rejects WeChat event requests with an invalid signature', async () => {
+    const app = await buildApp({ databasePath: ':memory:', sessionSecret: '12345678901234567890123456789012', wechatToken: 'test-wechat-token' }); apps.push(app);
+
+    const get = await app.inject({ method: 'GET', url: '/api/wechat/event?signature=bad&timestamp=1&nonce=2&echostr=hi' });
+    const post = await app.inject({ method: 'POST', url: '/api/wechat/event?signature=bad&timestamp=1&nonce=2', headers: { 'content-type': 'text/xml' }, payload: '<xml/>' });
+
+    expect(get.statusCode).toBe(401);
+    expect(post.statusCode).toBe(401);
+  });
+
+  it('verifies the WeChat URL in encrypted mode by decrypting the echostr', async () => {
+    const wechatToken = 'test-wechat-token';
+    const app = await buildApp({ databasePath: ':memory:', sessionSecret: '12345678901234567890123456789012', wechatToken, wechatEncodingAesKey: AES_KEY, wechatAppId: AES_APP_ID }); apps.push(app);
+    const timestamp = '1700000000';
+    const nonce = 'nonce-1';
+    const echostr = 'hello-encrypted';
+    const encrypted = encryptWechatMessage(echostr, AES_KEY, AES_APP_ID);
+    const signature = wechatMsgSignature(wechatToken, timestamp, nonce, encrypted);
+
+    const response = await app.inject({ method: 'GET', url: `/api/wechat/event?signature=${signature}&timestamp=${timestamp}&nonce=${nonce}&echostr=${encodeURIComponent(encrypted)}` });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toBe(echostr);
+  });
+
+  it('accepts an encrypted WeChat message and replies with an encrypted verification code', async () => {
+    const wechatToken = 'test-wechat-token';
+    const verificationCodes = new VerificationCodeStore();
+    const app = await buildApp({ databasePath: ':memory:', sessionSecret: '12345678901234567890123456789012', wechatToken, wechatEncodingAesKey: AES_KEY, wechatAppId: AES_APP_ID, verificationCodes }); apps.push(app);
+    const timestamp = '1700000000';
+    const nonce = 'nonce-1';
+    const innerXml = '<xml><ToUserName><![CDATA[gh_x]]></ToUserName><FromUserName><![CDATA[openid-1]]></FromUserName><CreateTime>1700000000</CreateTime><MsgType><![CDATA[text]]></MsgType><Content><![CDATA[验证码]]></Content></xml>';
+    const encrypted = encryptWechatMessage(innerXml, AES_KEY, AES_APP_ID);
+    const signature = wechatMsgSignature(wechatToken, timestamp, nonce, encrypted);
+
+    const event = await app.inject({
+      method: 'POST',
+      url: `/api/wechat/event?msg_signature=${signature}&timestamp=${timestamp}&nonce=${nonce}`,
+      headers: { 'content-type': 'text/xml' },
+      payload: `<xml><ToUserName><![CDATA[gh_x]]></ToUserName><Encrypt><![CDATA[${encrypted}]]></Encrypt></xml>`,
+    });
+
+    expect(event.statusCode).toBe(200);
+    const replyXml = decryptWechatMessage(xmlField(event.body, 'Encrypt'), AES_KEY, AES_APP_ID);
+    expect(replyXml.match(/在线网站验证码为：(\d{6})/)?.[1]).toMatch(/^\d{6}$/);
+    expect(verificationCodes.size).toBe(1);
+  });
+
+  it('pushes a verification code via template message when the menu button is clicked', async () => {
+    const sentBodies: unknown[] = [];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/cgi-bin/token')) return new Response(JSON.stringify({ access_token: 'token-1', expires_in: 7200 }), { status: 200, headers: { 'content-type': 'application/json' } });
+      if (url.includes('/message/template/send')) {
+        sentBodies.push(JSON.parse(String(init?.body)));
+        return new Response(JSON.stringify({ errcode: 0, errmsg: 'ok' }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      throw new Error('unexpected ' + url);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const verificationCodes = new VerificationCodeStore();
+    const app = await buildApp({ databasePath: ':memory:', sessionSecret: '12345678901234567890123456789012', wechatToken: 'test-wechat-token', wechatAppId: 'wx-test', wechatAppSecret: 'secret-test', wechatTemplateId: 'tmpl-1', verificationCodes }); apps.push(app);
+    const timestamp = '1700000000';
+    const nonce = 'nonce-1';
+    const signature = wechatSignature('test-wechat-token', timestamp, nonce);
+    const clickXml = '<xml><ToUserName><![CDATA[gh_x]]></ToUserName><FromUserName><![CDATA[openid-1]]></FromUserName><CreateTime>1700000000</CreateTime><MsgType><![CDATA[event]]></MsgType><Event><![CDATA[CLICK]]></Event><EventKey><![CDATA[LOGIN]]></EventKey></xml>';
+
+    const response = await app.inject({ method: 'POST', url: `/api/wechat/event?signature=${signature}&timestamp=${timestamp}&nonce=${nonce}`, headers: { 'content-type': 'text/xml' }, payload: clickXml });
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toBe('success');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(verificationCodes.size).toBe(1);
+    expect(sentBodies[0]).toMatchObject({ touser: 'openid-1', template_id: 'tmpl-1' });
+  });
+
+  it('pushes a verification code via template message when a new user subscribes', async () => {
+    const sentBodies: unknown[] = [];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/cgi-bin/token')) return new Response(JSON.stringify({ access_token: 'token-1', expires_in: 7200 }), { status: 200, headers: { 'content-type': 'application/json' } });
+      if (url.includes('/message/template/send')) {
+        sentBodies.push(JSON.parse(String(init?.body)));
+        return new Response(JSON.stringify({ errcode: 0, errmsg: 'ok' }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      throw new Error('unexpected ' + url);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const verificationCodes = new VerificationCodeStore();
+    const app = await buildApp({ databasePath: ':memory:', sessionSecret: '12345678901234567890123456789012', wechatToken: 'test-wechat-token', wechatAppId: 'wx-test', wechatAppSecret: 'secret-test', wechatTemplateId: 'tmpl-1', verificationCodes }); apps.push(app);
+    const timestamp = '1700000000';
+    const nonce = 'nonce-1';
+    const signature = wechatSignature('test-wechat-token', timestamp, nonce);
+    const subscribeXml = '<xml><ToUserName><![CDATA[gh_x]]></ToUserName><FromUserName><![CDATA[openid-2]]></FromUserName><CreateTime>1700000000</CreateTime><MsgType><![CDATA[event]]></MsgType><Event><![CDATA[subscribe]]></Event></xml>';
+
+    const response = await app.inject({ method: 'POST', url: `/api/wechat/event?signature=${signature}&timestamp=${timestamp}&nonce=${nonce}`, headers: { 'content-type': 'text/xml' }, payload: subscribeXml });
+    expect(response.statusCode).toBe(200);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(verificationCodes.size).toBe(1);
+    expect(sentBodies[0]).toMatchObject({ touser: 'openid-2', template_id: 'tmpl-1' });
+  });
+
+  it('issues a free token after a WeChat verification code and creates an agnes-backed room', async () => {
+    const wechatToken = 'test-wechat-token';
+    const aiKeys = new RoomAiKeyStore();
+    const verificationCodes = new VerificationCodeStore();
+    const app = await buildApp({
+      databasePath: ':memory:',
+      sessionSecret: '12345678901234567890123456789012',
+      wechatToken,
+      aiKeys,
+      verificationCodes,
+      agnesGatewayFactory: () => stubGateway(),
+    }); apps.push(app);
+    const timestamp = '1700000000';
+    const nonce = 'nonce-1';
+    const signature = wechatSignature(wechatToken, timestamp, nonce);
+    const eventUrl = `/api/wechat/event?signature=${signature}&timestamp=${timestamp}&nonce=${nonce}`;
+
+    const unrelated = await app.inject({ method: 'POST', url: eventUrl, headers: { 'content-type': 'text/xml' }, payload: wechatXml('随便聊聊') });
+    expect(unrelated.statusCode).toBe(200);
+    expect(unrelated.body).toBe('success');
+    expect(verificationCodes.size).toBe(0);
+
+    const event = await app.inject({ method: 'POST', url: eventUrl, headers: { 'content-type': 'text/xml' }, payload: wechatXml('验证码') });
+    expect(event.statusCode).toBe(200);
+    const code = event.body.match(/在线网站验证码为：(\d{6})/)?.[1];
+    expect(code).toMatch(/^\d{6}$/);
+    expect(verificationCodes.size).toBe(1);
+
+    const verify = await app.inject({ method: 'POST', url: '/api/ai/free-token', payload: { code } });
+    expect(verify.statusCode).toBe(200);
+    const verifyCookie = cookie(verify);
+    const reuse = await app.inject({ method: 'POST', url: '/api/ai/free-token', payload: { code } });
+    expect(reuse.statusCode).toBe(400);
+
+    const created = await app.inject({ method: 'POST', url: '/api/rooms', headers: { cookie: verifyCookie }, payload: { nickname: '甲方', config, freeToken: true } });
+    expect(created.statusCode).toBe(201);
+    expect(aiKeys.get(created.json().roomCode as string)).toEqual({ provider: 'agnes' });
+  });
+
+  it('rejects free-token rooms without a grant, invalid codes, and missing credentials', async () => {
+    const app = await buildApp({ databasePath: ':memory:', sessionSecret: '12345678901234567890123456789012', wechatToken: 'test-wechat-token' }); apps.push(app);
+
+    const noGrant = await app.inject({ method: 'POST', url: '/api/rooms', payload: { nickname: '甲方', config, freeToken: true } });
+    expect(noGrant.statusCode).toBe(403);
+
+    const noCredential = await app.inject({ method: 'POST', url: '/api/rooms', payload: { nickname: '甲方', config } });
+    expect(noCredential.statusCode).toBe(400);
+
+    const invalidCode = await app.inject({ method: 'POST', url: '/api/ai/free-token', payload: { code: '123456' } });
+    expect(invalidCode.statusCode).toBe(400);
+
+    const shortCode = await app.inject({ method: 'POST', url: '/api/ai/free-token', payload: { code: '123' } });
+    expect(shortCode.statusCode).toBe(400);
   });
 });

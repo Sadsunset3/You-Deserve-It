@@ -25,36 +25,41 @@ const roomViewWithTraitReadiness: Pick<RoomView, 'traitReadiness'> = { traitRead
 
 describe('shared contracts', () => {
   it('accepts the minimum legal room configuration', () => {
-    expect(gameConfigSchema.parse({ games: 1, timingMode: 'timed', selectionSeconds: 20, traitSeconds: 20, debateMinutes: 3 }).games).toBe(1);
+    expect(gameConfigSchema.parse({ games: 1, debateMinutes: 3 }).games).toBe(1);
   });
 
   it('accepts only odd match lengths so finite hands never require a tiebreak game', () => {
-    const base = { timingMode: 'timed', selectionSeconds: 180, traitSeconds: 180, debateMinutes: 5 };
+    const base = { debateMinutes: 5 };
     for (const games of [1, 3, 5]) expect(gameConfigSchema.parse({ ...base, games }).games).toBe(games);
     for (const games of [2, 4]) expect(() => gameConfigSchema.parse({ ...base, games })).toThrow();
   });
 
   it('rejects out-of-range timing and nickname values', () => {
-    expect(() => createRoomSchema.parse({ nickname: 'A', config: { games: 6, timingMode: 'timed', selectionSeconds: 10, traitSeconds: 10, debateMinutes: 2 }, apiKey: 'test-key' })).toThrow();
+    expect(() => createRoomSchema.parse({ nickname: 'A', config: { games: 6, debateMinutes: 2 }, apiKey: 'test-key' })).toThrow();
   });
 
-  it('requires a non-empty DeepSeek key when creating a room', () => {
-    const config = { games: 1, timingMode: 'timed', selectionSeconds: 180, traitSeconds: 180, debateMinutes: 5 };
+  it('requires either a DeepSeek key or a free-token grant when creating a room', () => {
+    const config = { games: 1, debateMinutes: 5 };
     expect(() => createRoomSchema.parse({ nickname: '甲方', config })).toThrow();
     expect(() => createRoomSchema.parse({ nickname: '甲方', config, apiKey: '   ' })).toThrow();
+    expect(() => createRoomSchema.parse({ nickname: '甲方', config, apiKey: 'sk-room-key', freeToken: true })).toThrow();
     expect(createRoomSchema.parse({ nickname: '甲方', config, apiKey: '  sk-room-key  ' }).apiKey).toBe('sk-room-key');
+    expect(createRoomSchema.parse({ nickname: '甲方', config, freeToken: true }).freeToken).toBe(true);
   });
 
   it('accepts only integer debate minutes from three through ten', () => {
-    const base = { games: 1, timingMode: 'timed', selectionSeconds: 180, traitSeconds: 180 };
+    const base = { games: 1 };
     for (const debateMinutes of [3, 4, 5, 6, 7, 8, 9, 10]) {
       expect(gameConfigSchema.parse({ ...base, debateMinutes }).debateMinutes).toBe(debateMinutes);
     }
     for (const debateMinutes of [2, 4.5, 11]) expect(() => gameConfigSchema.parse({ ...base, debateMinutes })).toThrow();
   });
 
-  it('removes disconnect grace configuration from strict room rules', () => {
-    expect(() => gameConfigSchema.parse({ games: 1, timingMode: 'timed', selectionSeconds: 180, traitSeconds: 180, debateMinutes: 5, disconnectSeconds: 120 })).toThrow();
+  it('rejects retired selection, trait, and disconnect timing fields under strict room rules', () => {
+    expect(() => gameConfigSchema.parse({ games: 1, debateMinutes: 5, selectionSeconds: 180 })).toThrow();
+    expect(() => gameConfigSchema.parse({ games: 1, debateMinutes: 5, traitSeconds: 180 })).toThrow();
+    expect(() => gameConfigSchema.parse({ games: 1, debateMinutes: 5, timingMode: 'timed' })).toThrow();
+    expect(() => gameConfigSchema.parse({ games: 1, debateMinutes: 5, disconnectSeconds: 120 })).toThrow();
   });
 
   it('trims chat messages and rejects empty or oversized messages', () => {

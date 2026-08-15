@@ -19,7 +19,7 @@ function makeRoom(overrides: Partial<RoomView> = {}): RoomView {
     version: 2,
     round: 1,
     game: 1,
-    config: { games: 1, timingMode: 'timed', selectionSeconds: 180, traitSeconds: 180, debateMinutes: 5 },
+    config: { games: 1, debateMinutes: 5 },
     conductor: { id: 'conductor-1', name: '铁面列车长', persona: '冷静审视每一种选择。', rule: '事实优先。', bias: 0 },
     deadline: null,
     me: { playerId: 'p1', nickname: '甲方玩家', seat: 'a', ready: true, connected: true },
@@ -35,6 +35,7 @@ function makeRoom(overrides: Partial<RoomView> = {}): RoomView {
     debateMessages: [],
     messageSequence: 0,
     roundVerdict: null,
+    roundResultReady: { mine: false, opponent: false },
     roundRecords: [],
     trackVerdict: null,
     judgment: null,
@@ -65,6 +66,7 @@ afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  sessionStorage.clear();
   Reflect.deleteProperty(document, 'elementFromPoint');
   Reflect.deleteProperty(HTMLElement.prototype, 'animate');
 });
@@ -86,30 +88,16 @@ describe('player web', () => {
     expect(within(games).getAllByRole('option').map((option) => option.getAttribute('value'))).toEqual(['1', '3', '5']);
   });
 
-  it('uses tripled phase defaults and integer debate minutes without disconnect grace', () => {
+  it('defaults the debate chat to three minutes and offers only integer minutes through ten', () => {
     render(<App />);
 
-    const selection = screen.getByLabelText('选牌秒数');
-    const traits = screen.getByLabelText('词条秒数');
     const debate = screen.getByLabelText('攻防聊天室分钟');
 
-    expect(selection).toHaveValue(180);
-    expect(traits).toHaveValue(180);
-    expect(debate).toHaveValue('5');
+    expect(debate).toHaveValue('3');
     expect(within(debate).getAllByRole('option').map((option) => option.getAttribute('value'))).toEqual(['3', '4', '5', '6', '7', '8', '9', '10']);
+    expect(screen.queryByLabelText('选牌秒数')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('词条秒数')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('掉线判负秒数')).not.toBeInTheDocument();
-
-    fireEvent.change(selection, { target: { value: '999' } });
-    expect(selection).toHaveValue(540);
-  });
-
-  it('disables only selecting and trait durations when unlimited is chosen', () => {
-    render(<App />);
-    fireEvent.click(screen.getByLabelText('不限时'));
-
-    expect(screen.getByLabelText('选牌秒数')).toBeDisabled();
-    expect(screen.getByLabelText('词条秒数')).toBeDisabled();
-    expect(screen.getByLabelText('攻防聊天室分钟')).toBeEnabled();
   });
 
   it('requires a successful DeepSeek key test before creating a room', async () => {
@@ -149,6 +137,39 @@ describe('player web', () => {
     expect(screen.queryByLabelText('DeepSeek Key')).not.toBeInTheDocument();
   });
 
+  it('verifies a free token from the public account and creates a room without a key', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      void init;
+      const url = String(input);
+      if (url === '/api/ai/free-token') return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'content-type': 'application/json' } });
+      return new Response(JSON.stringify({ error: 'stop after inspecting request' }), { status: 409, headers: { 'content-type': 'application/json' } });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<App />);
+
+    fireEvent.change(screen.getByLabelText('你的称呼'), { target: { value: '甲方玩家' } });
+    fireEvent.click(screen.getByRole('button', { name: '免费 Token' }));
+    expect(screen.getByText(/不想提供自己的 Key/)).toBeInTheDocument();
+    const create = screen.getAllByRole('button', { name: '创建审判室' }).at(-1)!;
+    expect(create).toBeDisabled();
+
+    fireEvent.click(screen.getByRole('button', { name: /获取验证码，免费使用 Token/ }));
+    expect(screen.getByRole('dialog', { name: '免费 Token 验证' })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('验证码'), { target: { value: '123456' } });
+    fireEvent.click(screen.getByRole('button', { name: '验证并领取免费 Token' }));
+
+    expect(await screen.findByText('验证成功，免费 Token 已就绪。')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: '关闭并建房' }));
+
+    expect(await screen.findByText('免费 Token 已验证，可以直接创建房间。')).toBeVisible();
+    expect(create).toBeEnabled();
+
+    fireEvent.click(create);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/rooms', expect.objectContaining({ method: 'POST' })));
+    const createCall = fetchMock.mock.calls.find(([url]) => String(url) === '/api/rooms');
+    expect(JSON.parse(String(createCall?.[1]?.body))).toMatchObject({ nickname: '甲方玩家', freeToken: true });
+  });
+
   it('keeps the waiting screen valid without a conductor', () => {
     render(<RoomScreen room={makeRoom({ phase: 'waiting', conductor: null, hand: null, opponent: null })} send={async () => {}} />);
 
@@ -171,7 +192,7 @@ describe('selecting train stage', () => {
     render(<RoomScreen room={makeRoom({
       game: 2,
       round: 3,
-      config: { games: 5, timingMode: 'timed', selectionSeconds: 180, traitSeconds: 180, debateMinutes: 5 },
+      config: { games: 5, debateMinutes: 5 },
       scores: { a: 1, b: 2 },
       opponentRemaining: { good: 3, evil: 1, traits: 4 },
     })} send={async () => {}} />);

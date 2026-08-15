@@ -20,8 +20,8 @@ const roundInput: RoundDecisionInput = {
   ],
   priorRounds: [],
 };
-const trackInput: TrackDecisionInput = { seed: 'room-7-final', conductor, tracks: { a: [target], b: [{ ...target, id: 'thief', name: '小偷', alignment: 'evil', background: '偷走一百万元' }] }, rounds: [] };
-const judgmentInput: JudgmentInput = { ...trackInput, players: { a: { nickname: '甲方' }, b: { nickname: '乙方' } }, verdict: { crushedSeat: 'b', survivor: 'a', reason: '甲方更值得保留', decisiveFactors: ['救人'], fallback: false } };
+const trackInput: TrackDecisionInput = { seed: 'room-7-final', conductor, players: { a: { nickname: '甲方' }, b: { nickname: '乙方' } }, tracks: { a: [target], b: [{ ...target, id: 'thief', name: '小偷', alignment: 'evil', background: '偷走一百万元' }] }, rounds: [] };
+const judgmentInput: JudgmentInput = { ...trackInput, players: { a: { nickname: '甲方' }, b: { nickname: '乙方' } }, verdict: { crushedSeat: 'b', survivor: 'a', reason: '甲方更值得保留', speech: '我看了两条轨，甲这边的人更站得住。', decisiveFactors: ['救人'], fallback: false } };
 
 describe('AI gateway', () => {
   const originalDeepSeekKey = process.env.DEEPSEEK_API_KEY;
@@ -58,6 +58,21 @@ describe('AI gateway', () => {
     expect(attempts).toBe(3); expect(verdict.fallback).toBe(true);
   });
 
+  it('omits the DeepSeek thinking flag when disabled for OpenAI-compatible relays', async () => {
+    let capturedPayload: unknown;
+    const gateway = createAiGateway({
+      thinking: false,
+      createCompletion: async (payload) => {
+        capturedPayload = payload;
+        return { choices: [{ message: { content: '{"winnerSeat":"b","conductorMessage":"这轮乙方说得更在理，我判乙方赢。","debateSummary":"双方围绕价值交锋。","winningSummary":"保护无辜者值得保留。","fallback":false}' } }] };
+      },
+    });
+
+    await gateway.decideRound(roundInput);
+
+    expect(capturedPayload).not.toHaveProperty('thinking');
+  });
+
   it('validates one structured result containing the verdict and both summaries', () => {
     expect(roundVerdictSchema.parse({
       winnerSeat: 'a',
@@ -75,6 +90,29 @@ describe('AI gateway', () => {
     expect(built[0]?.content).toContain('debateSummary');
     expect(built[0]?.content).toContain('winningSummary');
     expect(JSON.stringify(built[1])).toContain('这条轨道上的我');
+  });
+
+  it('treats player-invented background stories as fabrication in the round and track prompts', () => {
+    const roundSystem = buildRoundMessages(roundInput)[0]?.content ?? '';
+    expect(roundSystem).toContain('为目标人物虚构的背景、外貌、身份、经历');
+    expect(roundSystem).toContain('一律视为玩家假话');
+    expect(roundSystem).toContain('同样躺在铁轨上、为了活下去的玩家自己说的话');
+    expect(roundSystem).toContain('不是被辩护的目标人物在说话');
+    const trackSystem = buildTrackMessages(trackInput)[0]?.content ?? '';
+    expect(trackSystem).toContain('不得作为人物事实计入权重');
+    expect(trackSystem).toContain('speech：列车长以自己人设的口吻');
+    expect(trackSystem).toContain('不要用a轨/b轨');
+    expect(roundSystem.slice(0, 120)).toBe(trackSystem.slice(0, 120));
+  });
+
+  it('runs the final judgment as a bystander moral autopsy that names the crushed player', () => {
+    const system = buildJudgmentMessages(judgmentInput)[0]?.content ?? '';
+    expect(system).toContain('旁观者');
+    expect(system).toContain('道德尸检');
+    expect(system).toContain('所在的轨道');
+    expect(system).toContain('只要火车别撞我');
+    expect(system).toContain('玩家没有选择替他们辩护');
+    expect(system.slice(0, 120)).toBe(buildRoundMessages(roundInput)[0]!.content!.slice(0, 120));
   });
 
   it('keeps a shared stable policy prefix before task instructions and untrusted match data', () => {
@@ -162,7 +200,7 @@ describe('AI gateway', () => {
 
   it('uses independent schemas for final track and philosophical judgment decisions', async () => {
     const responses = [
-      '{"crushedSeat":"b","survivor":"a","reason":"甲方更值得保留","decisiveFactors":["救人"],"fallback":false}',
+      '{"crushedSeat":"b","survivor":"a","reason":"甲方更值得保留","speech":"我看了两条轨，甲这边的人更站得住，乙那边只能被压过去。","decisiveFactors":["救人"],"fallback":false}',
       '{"title":"最后的道岔","stanzas":[{"kind":"opening","lines":["列车切开夜色，","名字等待称量。"]},{"kind":"player-a","lines":["甲方高举功绩，","也藏起恐惧。"]},{"kind":"player-b","lines":["乙方追问偿还，","替自己的轨道呼吸。"]},{"kind":"tracks","lines":["医生留在甲轨，","小偷伏在乙轨。"]},{"kind":"verdict","lines":["列车长拉下拉杆，","乙轨被车轮带走。"]}],"fallback":false}',
     ];
     const payloads: unknown[] = [];
@@ -171,7 +209,7 @@ describe('AI gateway', () => {
     expect((await gateway.decideTrack(trackInput)).survivor).toBe('a');
     expect((await gateway.judgeMatch(judgmentInput)).stanzas).toHaveLength(5);
     expect(JSON.stringify(payloads[0])).toContain('偷走一百万元');
-    expect(JSON.stringify(payloads[1])).toContain('不得辱骂玩家');
+    expect(JSON.stringify(payloads[1])).toContain('不要辱骂');
     expect(JSON.stringify(payloads[1])).toContain('stanzas');
   });
 });

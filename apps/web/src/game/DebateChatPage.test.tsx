@@ -53,6 +53,9 @@ describe('DebateChatPage', () => {
     expect(messages[1]).toHaveTextContent('乙方第二条');
     expect(within(messages[0]!).getByText('甲方')).toBeVisible();
     expect(within(messages[1]!).getByText('乙方')).toBeVisible();
+    expect(within(messages[0]!).getByText('进攻方')).toBeVisible();
+    expect(within(messages[1]!).getByText('防守方')).toBeVisible();
+    expect(screen.getByText(/不要为人物虚构背景/)).toBeVisible();
 
     fireEvent.change(screen.getByLabelText('发送辩论消息'), { target: { value: '  我替自己所在的轨道辩护  ' } });
     fireEvent.keyDown(screen.getByLabelText('发送辩论消息'), { key: 'Enter', shiftKey: false });
@@ -69,6 +72,68 @@ describe('DebateChatPage', () => {
 
     expect(screen.getByLabelText('发送辩论消息')).toBeDisabled();
     expect(screen.getByTestId('conductor-verdict')).toHaveTextContent(verdict.conductorMessage);
-    expect(screen.getByTestId('conductor-verdict')).toHaveTextContent('甲方胜出');
+    expect(screen.getByTestId('conductor-verdict')).toHaveTextContent('本轮胜方：甲方（进攻方）');
+    expect(screen.getByTestId('conductor-verdict')).toHaveTextContent(verdict.winningSummary);
+    expect(screen.getByTestId('conductor-verdict')).toHaveTextContent('总结辩词已记入目标人物档案');
+    expect(screen.getByRole('button', { name: '确认，进入下一轮攻防' })).toBeVisible();
+  });
+
+  it('sends round-result-done when the player confirms the verdict', async () => {
+    const send = vi.fn(async () => undefined);
+    vi.spyOn(crypto, 'randomUUID').mockReturnValue('00000000-0000-4000-8000-000000000703');
+    const verdict = { winnerSeat: 'a' as const, conductorMessage: '我赞同甲方。', debateSummary: '总结', winningSummary: '责任不能被功绩抵消。', fallback: false };
+    const room = makeRoom({ phase: 'round-result', currentTargetId: 'b0', roundVerdict: verdict });
+    render(<DebateChatPage room={room} send={send} />);
+    fireEvent.click(screen.getByRole('button', { name: '确认，进入下一轮攻防' }));
+    await waitFor(() => expect(send).toHaveBeenCalledWith('round-result-done', { commandId: '00000000-0000-4000-8000-000000000703', expectedVersion: room.version }));
+  });
+
+  it('reflects confirmation readiness and uses final-track wording on round three', () => {
+    const verdict = { winnerSeat: 'b' as const, conductorMessage: '这轮乙方更站得住。', debateSummary: '总结', winningSummary: '他仍有价值。', fallback: false };
+    const room = makeRoom({ phase: 'round-result', currentTargetId: 'b0', roundVerdict: verdict, roundResultReady: { mine: true, opponent: false } });
+    const { unmount } = render(<DebateChatPage room={room} send={async () => undefined} />);
+    expect(screen.getByText('你已确认 ✓')).toBeVisible();
+    expect(screen.getByText('等待对方确认…')).toBeVisible();
+    expect(screen.getByRole('button', { name: '已确认，等待对方' })).toBeDisabled();
+    expect(screen.getByTestId('conductor-verdict')).toHaveTextContent('本轮胜方：乙方（防守方）');
+    unmount();
+
+    const third = makeRoom({ phase: 'round-result', round: 3, currentTargetId: 'b0', roundVerdict: verdict });
+    render(<DebateChatPage room={third} send={async () => undefined} />);
+    expect(screen.getByRole('button', { name: '确认，进入最终压轨' })).toBeVisible();
+  });
+
+  it('keeps focus in the composer after sending with Enter so typing can continue', async () => {
+    const send = vi.fn(async () => undefined);
+    vi.spyOn(crypto, 'randomUUID').mockReturnValue('00000000-0000-4000-8000-000000000702');
+    render(<DebateChatPage room={makeRoom({ phase: 'debate-chat', currentTargetId: 'b0' })} send={send} />);
+    const input = screen.getByLabelText('发送辩论消息') as HTMLTextAreaElement;
+    input.focus();
+    expect(document.activeElement).toBe(input);
+    fireEvent.change(input, { target: { value: '我继续替自己辩护' } });
+    fireEvent.keyDown(input, { key: 'Enter', shiftKey: false });
+    await waitFor(() => expect(input.value).toBe(''));
+    expect(send).toHaveBeenCalledWith('debate-messages', { messageId: '00000000-0000-4000-8000-000000000702', text: '我继续替自己辩护' });
+    expect(document.activeElement).toBe(input);
+  });
+
+  it('shows the candidate full dossier (traits and winning arguments) when the attacker locks a target', () => {
+    const candidates = characters.map((item) => item.id === 'b0'
+      ? { ...item, traits: [{ id: 'bt1', text: '从不临阵脱逃', tag: '责任', polarity: 1 as const }], arguments: [{ kind: 'defense' as const, text: '用自己的重伤换回整条街的平安。' }] }
+      : item);
+    const room = makeRoom({ phase: 'target-selecting', roundAttacker: 'a', characters: candidates });
+    render(<DebateChatPage room={room} send={async () => undefined} />);
+
+    const police = screen.getByRole('button', { name: '将警察设为攻防目标' });
+    expect(within(police).getByText('从不临阵脱逃')).toBeVisible();
+    expect(within(police).getByText('责任')).toBeVisible();
+    expect(within(police).getByText('用自己的重伤换回整条街的平安。')).toBeVisible();
+    expect(screen.getByText('你是进攻方')).toBeVisible();
+  });
+
+  it('shows the defender their role badge while waiting for the attacker to lock a target', () => {
+    render(<DebateChatPage room={makeRoom({ phase: 'target-selecting', me: { playerId: 'p2', nickname: '乙方', seat: 'b', ready: true, connected: true }, roundAttacker: 'a' })} send={async () => undefined} />);
+
+    expect(screen.getByText('你是防守方')).toBeVisible();
   });
 });

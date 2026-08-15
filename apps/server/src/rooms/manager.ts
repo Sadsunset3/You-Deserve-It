@@ -44,7 +44,7 @@ export class RoomManager {
       selections: { a: [], b: [] }, automaticCharacters: { a: null, b: null },
       usedCharacters: { a: [], b: [] }, usedTraits: { a: [], b: [] }, traitsDone: { a: false, b: false },
       characterTraits: {}, arguments: {}, roundAttacker: null, currentTargetId: null,
-      debateMessages: [], messageSequence: 0, roundVerdict: null,
+      debateMessages: [], messageSequence: 0, roundVerdict: null, roundResultReady: { a: false, b: false },
       roundRecords: [], trackVerdict: null, judgment: null, nextGameReady: { a: false, b: false }, deadline: null,
       scores: { a: 0, b: 0 }, finalResult: null,
     };
@@ -84,7 +84,7 @@ export class RoomManager {
       room.usedCharacters[seat].push(...ids);
       if (room.selections.a.length === 2 && room.selections.b.length === 2) {
         room.phase = 'traits';
-        room.deadline = this.phaseDeadline(room, room.config.traitSeconds);
+        room.deadline = null;
       }
     });
   }
@@ -141,16 +141,26 @@ export class RoomManager {
     });
   }
 
-  async resolveRound(code: string, version: number, verdict: DebateRoundVerdict, now = new Date()) {
+  async resolveRound(code: string, version: number, verdict: DebateRoundVerdict) {
     return this.mutateVersion(code, version, (room) => {
       if (room.phase !== 'round-adjudicating' || !room.currentTargetId || !room.roundAttacker) throw new Error('round verdict unavailable');
       room.roundRecords.push({ round: room.round, attacker: room.roundAttacker, defender: otherSeat(room.roundAttacker), targetId: room.currentTargetId, messages: structuredClone(room.debateMessages), verdict });
       const kind = verdict.winnerSeat === room.roundAttacker ? 'attack' : 'defense';
       (room.arguments[room.currentTargetId] ??= []).push({ kind, text: verdict.winningSummary });
       room.roundVerdict = verdict;
+      room.roundResultReady = { a: false, b: false };
       room.phase = 'round-result';
-      room.deadline = new Date(now.getTime() + 5000).toISOString();
+      room.deadline = null;
     });
+  }
+
+  async confirmRoundResult(code: string, playerId: string, version: number): Promise<RoomTickEvent | null> {
+    const room = await this.command(code, playerId, version, (draft, seat) => {
+      if (draft.phase !== 'round-result') throw new Error('round result unavailable');
+      draft.roundResultReady[seat] = true;
+    });
+    if (!room.roundResultReady.a || !room.roundResultReady.b) return null;
+    return this.advanceAfterRound(code, room.version);
   }
 
   async advanceAfterRound(code: string, version: number): Promise<RoomTickEvent | null> {
@@ -167,6 +177,7 @@ export class RoomManager {
       draft.debateMessages = [];
       draft.messageSequence = 0;
       draft.roundVerdict = null;
+      draft.roundResultReady = { a: false, b: false };
       draft.phase = 'target-selecting';
       draft.deadline = null;
     });
@@ -175,22 +186,23 @@ export class RoomManager {
       : null;
   }
 
-  async resolveTrack(code: string, version: number, verdict: TrackVerdict) {
+  async resolveTrack(code: string, version: number, verdict: TrackVerdict, now = new Date()) {
     return this.mutateVersion(code, version, (room) => {
       if (room.phase !== 'track-adjudicating') throw new Error('track verdict unavailable');
       room.trackVerdict = verdict;
       room.scores[verdict.survivor]++;
       room.finalResult = { survivor: verdict.survivor, reason: verdict.reason, philosophy: '' };
-      room.phase = 'judgment-generating';
+      room.phase = 'conductor-speech';
+      room.deadline = new Date(now.getTime() + 8_000).toISOString();
     });
   }
 
   async saveJudgment(code: string, version: number, judgment: PhilosophyJudgment) {
     return this.mutateVersion(code, version, (room) => {
-      if (room.phase !== 'judgment-generating') throw new Error('judgment unavailable');
+      if (room.phase !== 'judgment-generating' && room.phase !== 'conductor-speech') throw new Error('judgment unavailable');
       room.judgment = judgment;
       if (room.finalResult) room.finalResult.philosophy = judgment.stanzas.flatMap((stanza) => stanza.lines).join('\n');
-      room.phase = 'judgment';
+      if (room.phase === 'judgment-generating') room.phase = 'judgment';
     });
   }
 
@@ -219,7 +231,13 @@ export class RoomManager {
 
   getTrackDecisionInput(code: string): TrackDecisionInput {
     const room = this.require(code);
-    return { seed: `${code}-${room.game}-track`, conductor: this.requireConductor(room)!, tracks: { a: this.track(room, 'a'), b: this.track(room, 'b') }, rounds: room.roundRecords };
+    return {
+      seed: `${code}-${room.game}-track`,
+      conductor: this.requireConductor(room)!,
+      players: { a: { nickname: this.playerAt(room, 'a').nickname }, b: { nickname: this.playerAt(room, 'b').nickname } },
+      tracks: { a: this.track(room, 'a'), b: this.track(room, 'b') },
+      rounds: room.roundRecords,
+    };
   }
 
   getJudgmentInput(code: string): JudgmentInput {
@@ -247,17 +265,19 @@ export class RoomManager {
       if (current.phase === 'debate-chat') {
         const room = await this.mutateVersion(current.roomCode, current.version, (draft) => { draft.phase = 'round-adjudicating'; draft.deadline = null; });
         events.push({ type: 'round-adjudication', roomCode: room.roomCode, version: room.version, input: this.roundInput(room) });
-      } else if (current.phase === 'round-result') {
-        const event = await this.advanceAfterRound(current.roomCode, current.version);
-        if (event) events.push(event);
-      } else if (current.phase === 'selecting' || current.phase === 'traits') {
-        await this.mutateVersion(current.roomCode, current.version, (room) => this.expire(room, now));
+      } else if (current.phase === 'conductor-speech') {
+        await this.mutateVersion(current.roomCode, current.version, (draft) => {
+          if (draft.judgment) {
+            draft.phase = 'judgment';
+            draft.deadline = null;
+          } else {
+            draft.deadline = new Date(now.getTime() + 2000).toISOString();
+          }
+        });
       }
     }
     return events;
   }
-
-  async advanceExpired(now = new Date()) { return this.tick(now); }
 
   setConnected(code: string, playerId: string, connected: boolean) {
     const room = this.require(code);
@@ -306,6 +326,7 @@ export class RoomManager {
       characters,
       roundAttacker: room.roundAttacker, currentTargetId: room.currentTargetId, roundRecords: room.roundRecords,
       debateMessages: room.debateMessages, messageSequence: room.messageSequence, roundVerdict: room.roundVerdict,
+      roundResultReady: { mine: room.roundResultReady[me.seat], opponent: room.roundResultReady[opponentSeat] },
       trackVerdict: room.trackVerdict, judgment: room.judgment, nextGameReady: room.nextGameReady,
       scores: room.scores, finalResult: room.finalResult,
     };
@@ -319,10 +340,10 @@ export class RoomManager {
     room.roundRecords = []; room.trackVerdict = null; room.judgment = null; room.finalResult = null; room.nextGameReady = { a: false, b: false };
     room.roundAttacker = this.random() < 0.5 ? 'a' : 'b';
     room.selections = { a: [], b: [] }; room.traitsDone = { a: false, b: false };
-    room.currentTargetId = null; room.debateMessages = []; room.messageSequence = 0; room.roundVerdict = null;
+    room.currentTargetId = null; room.debateMessages = []; room.messageSequence = 0; room.roundVerdict = null; room.roundResultReady = { a: false, b: false };
     this.dealAutomaticCharacters(room);
     room.phase = 'selecting';
-    room.deadline = this.phaseDeadline(room, room.config.selectionSeconds);
+    room.deadline = null;
   }
 
   private dealAutomaticCharacters(room: Room) {
@@ -332,17 +353,6 @@ export class RoomManager {
     const take = () => pool.splice(Math.min(pool.length - 1, Math.floor(this.random() * pool.length)), 1)[0]!.id;
     room.automaticCharacters = { a: take(), b: take() };
     room.usedCharacters.a.push(room.automaticCharacters.a!); room.usedCharacters.b.push(room.automaticCharacters.b!);
-  }
-
-  private expire(room: Room, now: Date) {
-    if (room.phase === 'selecting') {
-      for (const seat of ['a', 'b'] as const) if (room.selections[seat].length === 0) {
-        const ids = room.hands[seat]!.characters.filter((card) => !room.usedCharacters[seat].includes(card.id)).slice(0, 2).map((card) => card.id);
-        room.selections[seat] = ids; room.usedCharacters[seat].push(...ids);
-      }
-      room.phase = 'traits'; room.deadline = this.phaseDeadline(room, room.config.traitSeconds, now); return;
-    }
-    if (room.phase === 'traits') { room.traitsDone = { a: true, b: true }; room.phase = 'target-selecting'; room.deadline = null; }
   }
 
   private roundInput(room: Room): RoundDecisionInput {
@@ -365,9 +375,6 @@ export class RoomManager {
     return { ...card, traits: (room.characterTraits[id] ?? []).map((traitId) => this.findTrait(traitId)), arguments: room.arguments[id] ?? [] };
   }
   private debateDeadline(room: Room, now = new Date()) { return new Date(now.getTime() + room.config.debateMinutes * 60_000).toISOString(); }
-  private phaseDeadline(room: Room, seconds: number, now = new Date()) {
-    return room.config.timingMode === 'unlimited' ? null : new Date(now.getTime() + seconds * 1000).toISOString();
-  }
   private player(room: Room, playerId: string) { const player = room.players.find((item) => item.playerId === playerId); if (!player) throw new Error('not in room'); return player; }
   private playerAt(room: Room, seat: Seat) { const player = room.players.find((item) => item.seat === seat); if (!player) throw new Error('player missing'); return player; }
   private findCharacter(id: string) { const card = catalog.characters.find((item) => item.id === id); if (!card) throw new Error(`character is missing: ${id}`); return card; }
